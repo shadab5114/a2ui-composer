@@ -1,0 +1,12 @@
+{
+  "surfaceUpdate": {
+    "surfaceId": "screen-home",
+    "catalogId": "https://pdesign.dev/catalog/v1/catalog.json",
+    "root": "root",
+    "components": [
+      { "id": "root", "component": "Column", "children": ["btn", "txt"], "gap": "4X", "padding": "0" },
+      { "id": "btn", "component": "Button", "children": { "literalString": "Get started" }, "kind": "primary", "size": "large" },
+      { "id": "txt", "component": "Text", "children": { "literalString": "Welcome" } }
+    ]
+  }
+}

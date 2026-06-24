@@ -1,0 +1,15 @@
+{
+  "surfaceUpdate": {
+    "surfaceId": "screen-profile",
+    "catalogId": "https://pdesign.dev/catalog/v1/catalog.json",
+    "root": "root",
+    "components": [
+      { "id": "root", "component": "Column", "children": ["greeting"], "gap": "2X" },
+      { "id": "greeting", "component": "Text", "children": { "path": "/user/name" } }
+    ]
+  },
+  "dataModelUpdate": {
+    "surfaceId": "screen-profile",
+    "contents": { "/user/name": "Ada Lovelace" }
+  }
+}

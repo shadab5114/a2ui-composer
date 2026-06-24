@@ -1,0 +1,11 @@
+{
+  "surfaceUpdate": {
+    "surfaceId": "screen-broken",
+    "catalogId": "https://pdesign.dev/catalog/v1/catalog.json",
+    "root": "root",
+    "components": [
+      { "id": "root", "component": "Column", "children": ["btn"] },
+      { "id": "btn", "component": "Button", "children": { "literalString": "Oops" }, "kind": "tertiary" }
+    ]
+  }
+}
