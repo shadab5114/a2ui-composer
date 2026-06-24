@@ -1,0 +1,13 @@
+@import "@shadab5114/pdesign-tokens/index.css";
+@import "@shadab5114/pds-core/styles.css";
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}

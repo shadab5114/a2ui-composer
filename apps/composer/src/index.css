@@ -1,0 +1,22 @@
+/* Design tokens (CSS variables) + design-system component styles.
+   These are consumed by the RENDERED @pds/core components, never by chrome. */
+@import "@shadab5114/pdesign-tokens/index.css";
+@import "@shadab5114/pds-core/styles.css";
+
+/* Tool chrome only. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: theme("colors.chrome.bg");
+  color: theme("colors.chrome.text");
+}
