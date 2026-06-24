@@ -4,15 +4,26 @@
  * schemas (green/red + error list).
  */
 import { useMemo } from "react";
-import { Check, ClipboardCopy, Download, X } from "lucide-react";
+import { Check, ClipboardCopy, Download, FolderDown, X } from "lucide-react";
 import { buildValidators, exportSurface, getCatalog, validate } from "@pds/a2ui-schema";
-import { useActiveSurface } from "../store";
+import { useActiveSurface, useComposer } from "../store";
 
 const catalogId = getCatalog().catalogId;
 const validators = buildValidators();
 
+function downloadJson(filename: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function ExportPanel({ onClose }: { onClose: () => void }) {
   const surface = useActiveSurface();
+  const doc = useComposer((s) => s.doc);
 
   const { json, result } = useMemo(() => {
     if (!surface) return { json: "", result: null };
@@ -21,13 +32,15 @@ export function ExportPanel({ onClose }: { onClose: () => void }) {
   }, [surface]);
 
   const download = () => {
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `surface-${surface?.id ?? "export"}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    if (surface) downloadJson(`surface-${surface.id}.json`, exportSurface(surface, catalogId));
+  };
+
+  // Per-surface A2UI files + app-level flow.json (cross-surface routing, §8).
+  const downloadAll = () => {
+    for (const s of Object.values(doc.surfaces)) {
+      downloadJson(`surface-${s.id}.json`, exportSurface(s, catalogId));
+    }
+    downloadJson("flow.json", { entrySurfaceId: doc.entrySurfaceId, flow: doc.flow });
   };
 
   return (
@@ -60,6 +73,13 @@ export function ExportPanel({ onClose }: { onClose: () => void }) {
             className="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-chrome-border"
           >
             <Download size={13} /> Download
+          </button>
+          <button
+            onClick={downloadAll}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-chrome-border"
+            title="Download every surface + flow.json"
+          >
+            <FolderDown size={13} /> All + flow
           </button>
           <button onClick={onClose} className="rounded p-1 hover:bg-chrome-border" title="Close">
             <X size={14} />

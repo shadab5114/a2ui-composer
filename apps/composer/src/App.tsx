@@ -13,12 +13,15 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Code2, Redo2, Undo2 } from "lucide-react";
+import { Code2, LayoutGrid, Redo2, Square, Undo2 } from "lucide-react";
 import { Palette } from "./palette/Palette";
 import { PageCanvas } from "./page-canvas/PageCanvas";
 import { Inspector } from "./inspector/Inspector";
 import { ExportPanel } from "./export/ExportPanel";
+import { FlowCanvas } from "./flow-canvas/FlowCanvas";
 import { useComposer, useUndoRedo } from "./store";
+
+type ViewMode = "page" | "flow";
 
 export function App() {
   const addNode = useComposer((s) => s.addNode);
@@ -26,6 +29,7 @@ export function App() {
   const { undo, redo, canUndo, canRedo } = useUndoRedo();
   const [dragLabel, setDragLabel] = useState<string | null>(null);
   const [showExport, setShowExport] = useState(false);
+  const [view, setView] = useState<ViewMode>("page");
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -65,6 +69,26 @@ export function App() {
       <div className="flex h-full w-full flex-col">
         <header className="flex h-10 shrink-0 items-center gap-3 border-b border-chrome-border bg-chrome-panel px-3 text-sm">
           <span className="font-semibold">PDS → A2UI Composer</span>
+
+          <div className="ml-4 flex items-center gap-0.5 rounded bg-chrome-bg p-0.5">
+            <button
+              onClick={() => setView("page")}
+              className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${
+                view === "page" ? "bg-chrome-border text-chrome-text" : "text-chrome-muted"
+              }`}
+            >
+              <Square size={13} /> Page
+            </button>
+            <button
+              onClick={() => setView("flow")}
+              className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${
+                view === "flow" ? "bg-chrome-border text-chrome-text" : "text-chrome-muted"
+              }`}
+            >
+              <LayoutGrid size={13} /> Flow
+            </button>
+          </div>
+
           <div className="ml-auto flex items-center gap-1">
             <button
               onClick={() => setShowExport((v) => !v)}
@@ -96,12 +120,14 @@ export function App() {
         </header>
 
         <div className="flex min-h-0 flex-1">
-          <aside className="w-56 shrink-0 border-r border-chrome-border bg-chrome-panel">
-            <Palette />
-          </aside>
+          {view === "page" && (
+            <aside className="w-56 shrink-0 border-r border-chrome-border bg-chrome-panel">
+              <Palette />
+            </aside>
+          )}
           <main className="flex min-w-0 flex-1 flex-col">
             <div className="min-h-0 flex-1">
-              <PageCanvas />
+              {view === "page" ? <PageCanvas /> : <FlowCanvas onEditScreen={() => setView("page")} />}
             </div>
             {showExport && (
               <div className="h-72 shrink-0">
@@ -109,9 +135,11 @@ export function App() {
               </div>
             )}
           </main>
-          <aside className="w-80 shrink-0 border-l border-chrome-border bg-chrome-panel">
-            <Inspector />
-          </aside>
+          {view === "page" && (
+            <aside className="w-80 shrink-0 border-l border-chrome-border bg-chrome-panel">
+              <Inspector />
+            </aside>
+          )}
         </div>
       </div>
 
