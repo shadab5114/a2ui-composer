@@ -12,7 +12,6 @@ import {
   exportSurface,
   getCatalog,
   importSurface,
-  rawCatalog,
   validate,
   type A2UIExport,
 } from "../src/index";
@@ -60,7 +59,7 @@ function firstDiff(a: string, b: string): string {
 
 let failures = 0;
 const catalog = getCatalog();
-const validators = buildValidators(rawCatalog);
+const validators = buildValidators();
 
 console.log(`\n● Catalog: ${catalog.catalogId}`);
 console.log(`  components: ${catalog.order.length}, validators: ${Object.keys(validators.byName).length}`);

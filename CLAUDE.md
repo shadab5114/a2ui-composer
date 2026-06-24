@@ -21,15 +21,33 @@ The catalog is imported directly from the package: `@shadab5114/pds-core/catalog
 (see ARCHITECTURE §"get catalog.json by importing from @pds-core/catalog.json").
 There is no separate `packages/catalog` workspace — the package is the single source.
 
+## Validation + descriptors: Zod (NOT Ajv)
+
+Pivoted away from Ajv. The design system's own **Zod schemas** (`@shadab5114/
+pds-core/schemas`, zod v4) are the single source of truth for BOTH:
+
+- **Validation** — a node's props are checked with `Schema.safeParse` (the exact
+  contract the components enforce). See `validate.ts` + `zod-source.ts`.
+- **Descriptors** — each schema is converted with `z.toJSONSchema(...)` and fed to
+  `loadCatalog`, so palette/inspector stay schema-driven from one source.
+
+`zod-source.ts` owns this: it imports the per-component schemas, marks slot props
+via `.meta({ "x-a2ui-slot": true })` (which `z.toJSONSchema` emits into the JSON
+view), builds the JSON views, and exposes `getCatalog()` + `buildValidators()`.
+Content `children` is `z.any()` → an unconstrained `{}` view → classified as
+`content`; other unconstrained/record props (renderIcon, viewportOverride) are
+skipped + warned. catalog.json is now used only for the `catalogId`.
+
 ## Invariants you must preserve
 
 - The renderer package (`@pds/a2ui-react`) is the single rendering path, shared by
   the composer preview and the sandbox. Never fork it.
 - The schema package (`@pds/a2ui-schema`) is pure (no React) and is the only home
   for tree⇆adjacency transforms. Keep `bun run check:roundtrip` green.
-- A node is droppable only if it is a slot container. The catalog has **no**
-  `x-a2ui-slot` keyword (verified), so we use the allowlist fallback:
-  `Frame` (layout primitive) and `TileContainer`.
+- A node is droppable only if it is a slot container. Slots are marked on the Zod
+  schema with `.meta({ "x-a2ui-slot": true })` (TileContainer); `Frame` is the
+  synthetic layout primitive. (An allowlist fallback remains in `catalog.ts` in
+  case a slot ever lacks the marker.)
 - Page layout is flex auto-layout, never absolute x/y.
 - `registry.ts` is the single swap point between stand-ins and `@pds/core`.
 

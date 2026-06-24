@@ -4,10 +4,12 @@
 export * from "./a2ui.types";
 export * from "./doc.types";
 export * from "./catalog.types";
-export * from "./catalog";
+export { loadCatalog } from "./catalog";
 export * from "./transform";
 export * from "./validate";
 export * from "./factory";
+export { getCatalog, buildValidators, rawCatalog } from "./zod-source";
+export type { Validators } from "./zod-source";
 export {
   FRAME_TYPE,
   A2UI_COLUMN,
@@ -19,16 +21,6 @@ export {
   isA2UILayout,
 } from "./frame";
 
-import catalogJson from "@shadab5114/pds-core/catalog.json";
-import { loadCatalog } from "./catalog";
-import type { CatalogModel } from "./catalog.types";
-
-/** The raw catalog JSON, imported directly from the design-system package. */
-export const rawCatalog: unknown = catalogJson;
-
-/** Lazily-built, memoized normalized catalog model from the real @pds/core catalog. */
-let _catalog: CatalogModel | null = null;
-export function getCatalog(): CatalogModel {
-  if (!_catalog) _catalog = loadCatalog(catalogJson);
-  return _catalog;
-}
+// `getCatalog`, `buildValidators`, and `rawCatalog` are sourced from the design
+// system's Zod schemas (see ./zod-source) — the single source of truth for both
+// the descriptor model and validation.

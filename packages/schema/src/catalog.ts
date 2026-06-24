@@ -75,6 +75,21 @@ function isDynamicStringRef(ref: string): boolean {
   return ref.includes("DynamicString");
 }
 
+/** True if a schema imposes no constraints (e.g. z.any() → `{}` plus a description). */
+function isUnconstrained(s: RawSchema): boolean {
+  return (
+    s.type === undefined &&
+    s.enum === undefined &&
+    s.$ref === undefined &&
+    s.const === undefined &&
+    s.properties === undefined &&
+    s.items === undefined &&
+    s.oneOf === undefined &&
+    s.anyOf === undefined &&
+    s.allOf === undefined
+  );
+}
+
 function localDefName(ref: string): string | null {
   const m = ref.match(/#\/\$defs\/([A-Za-z0-9_]+)$/);
   return m ? m[1] : null;
@@ -152,10 +167,12 @@ function deriveArray(
   }
   if (!itemDef) return {};
 
-  if (itemDef.oneOf && itemDef.oneOf.length > 0) {
+  // z.toJSONSchema emits discriminated unions as `anyOf`; raw catalog used `oneOf`.
+  const union = itemDef.oneOf ?? itemDef.anyOf;
+  if (union && union.length > 0) {
     const discriminator = "kind";
     const variants: ItemVariant[] = [];
-    for (const variant of itemDef.oneOf) {
+    for (const variant of union) {
       const fields = resolveFields(
         variant,
         defs,
@@ -190,6 +207,16 @@ function derivePropDescriptor(
   ownerLabel: string,
 ): PropDescriptor | null {
   const base = { name, required, description: schema.description };
+
+  // An unconstrained schema (z.any() → `{}` after toJSONSchema) is either the
+  // DynamicString `children` content slot, or a non-serializable opaque prop.
+  if (isUnconstrained(schema)) {
+    if (name === "children") return { ...base, kind: "content" };
+    warnings.push(
+      `${ownerLabel}.${name}: unconstrained prop (z.any) that is not content — skipped.`,
+    );
+    return null;
+  }
 
   // $ref: content (DynamicString) or nested object (*Props)
   if (schema.$ref) {

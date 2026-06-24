@@ -48,7 +48,8 @@ seam. Never fork the rendering logic.
 - **Flow canvas**: multiple screens (surfaces) as nodes, navigation between them
   as edges. Double-clicking a screen opens it in the page canvas.
 - **Export**: produce A2UI `surfaceUpdate` (flat adjacency list) + `dataModelUpdate`
-  per screen, validated against the catalog schema with Ajv.
+  per screen, with node props validated against the library's Zod schemas and a
+  structural check on the adjacency list.
 - **Validation sandbox**: a separate tiny app that takes exported JSON and renders
   it with the shared renderer, proving fidelity.
 - Web only. Local state only (no backend, no auth, no DB).
@@ -81,16 +82,18 @@ seam. Never fork the rendering logic.
 | Page canvas pan/zoom | react-zoom-pan-pinch | `react-zoom-pan-pinch` | Infinite-canvas viewport for the page editor |
 | Drag & drop / reorder | dnd-kit | `@dnd-kit/core`, `@dnd-kit/sortable` | Palette→canvas drop + in-container reorder |
 | Resize handles (optional) | react-moveable | `react-moveable` | Only for fixed-size frames; auto-layout sizing is token-based |
-| Schema validation | Ajv | `ajv`, `ajv-formats` | Validate export against `catalog.json` |
+| Schema validation | **Zod (the library's own schemas)** | `zod` (v4+) | Validate node props against `@pds/core`'s exported Zod schemas — same contract the components enforce. NOT Ajv |
 | IDs | nanoid | `nanoid` | Short, collision-resistant node ids |
 | Tool-chrome styling | Tailwind | `tailwindcss` | For the composer UI only — NOT for rendered DS components |
 | Tool-chrome icons | lucide-react | `lucide-react` | Palette/inspector icons |
 | Design system | `@pds/core` | (internal) | The real rendered components |
+| DS schemas | Zod schemas | (`@pds/core` schema entrypoint) | Per-component Zod schemas exposed by the library; the validation + descriptor source of truth |
 | Design tokens | CSS variables file | (internal) | Imported globally; DS components consume them |
 
 > Install the latest stable of each at scaffold time; the table fixes the
 > *package identity*, not exact versions. Confirm `@xyflow/react` (v12+), not
-> `reactflow` (legacy v11).
+> `reactflow` (legacy v11). Confirm **Zod v4** (v4.2.1+) — it ships native
+> `z.toJSONSchema()`; `zod-to-json-schema` is deprecated, do not add it.
 >
 > **All tooling is Bun.** Use `bun install` (not npm/pnpm), `bun add <pkg>` to add
 > deps, `bun run <script>` for scripts, `bunx <tool>` instead of `npx`, and
@@ -131,9 +134,9 @@ pds-a2ui-composer/
 │  │  ├─ src/
 │  │  │  ├─ a2ui.types.ts     A2UI wire types (surfaceUpdate, components, dataModel)
 │  │  │  ├─ doc.types.ts      Editor document model (superset of A2UI)
-│  │  │  ├─ catalog.ts        Load catalog.json, derive prop descriptors + slot info
+│  │  │  ├─ catalog.ts        Zod schemas → JSON-Schema view → prop descriptors + slot info
 │  │  │  ├─ transform.ts      tree(editor) ⇆ adjacency(A2UI): export() / import()
-│  │  │  ├─ validate.ts       Ajv validators built from catalog.json
+│  │  │  ├─ validate.ts       Zod prop validation + structural graph check
 │  │  │  └─ index.ts
 │  │  └─ dev/                 roundtrip-guard.ts (dev-time correctness check)
 │  ├─ renderer/               @pds/a2ui-react   (the shared interpreter)
@@ -246,19 +249,24 @@ export interface A2UIExport {
 
 ### 5.3 The `children` overload — resolve it explicitly
 
-The catalog types `children` as `DynamicString` for both *content* (`Button`,
+The schema types `children` as `DynamicString` for both *content* (`Button`,
 `Text`) and *child component references* (`TileContainer`). The tool must not
-guess. Add a vendor extension keyword in the catalog per property and read it:
+guess. Mark slot properties on the **Zod schema** with metadata, which flows into
+the generated JSON-Schema view (`z.toJSONSchema` emits registered `.meta()`):
 
-```jsonc
-// in catalog.json, on a slot property:
-"children": { "$ref": ".../DynamicString", "x-a2ui-slot": true }
+```ts
+// in the @pds/core Zod schema for a slot container:
+children: z.array(z.string()).meta({ a2uiSlot: true })   // child id refs
+// vs a content prop:
+children: DynamicString                                  // { literalString } | { path }
 ```
 
-`catalog.ts` reads `x-a2ui-slot`. A node is a **drop target iff it has a slot
-property**. Everything else is content/config and is edited in the Inspector.
-If the extension is absent, fall back to a hardcoded allowlist
-(`Frame`, `TileContainer`) and log a warning so the catalog gets fixed.
+`catalog.ts` reads the `a2uiSlot` metadata (surfaced as `x-a2uiSlot` in the JSON
+Schema). A node is a **drop target iff it has a slot property**. Everything else is
+content/config and is edited in the Inspector. If the metadata is absent, fall back
+to a hardcoded allowlist (`Frame`, `TileContainer`) and log a warning so the schema
+gets fixed. (Modelling slot children as `z.array(z.string())` rather than
+`DynamicString` also makes the Zod validation of slot containers correct — see §7.1.)
 
 ---
 
@@ -266,7 +274,7 @@ If the extension is absent, fall back to a hardcoded allowlist
 
 Read straight from the catalog schema; each maps to a different gesture:
 
-1. **Slot containers** — expose an `x-a2ui-slot` property (`Frame`,
+1. **Slot containers** — carry the `a2uiSlot` metadata on a property (`Frame`,
    `TileContainer`). These are the **only** droppable nodes on the page canvas.
 2. **Closed composites** — `TitleLockup`, `Tilelet`. They take structured object
    props (`title`, `subtitle`, `badge`, `image`) as `$ref`s to `*Props` defs.
@@ -285,13 +293,19 @@ present; otherwise allow any).
 
 ### 7.1 `schema` package (pure, no React)
 
-- `loadCatalog(json)` → a normalized `CatalogModel`: for each component, a list of
-  `PropDescriptor { name, kind, options?, default?, fields?, itemFields?, slot? }`
-  where `kind ∈ enum | bool | string | number | content | object | array`.
-  Derive `kind` from JSON Schema: `enum` → `enum`; `type: boolean` → `bool`;
-  `type: number` → `number`; `$ref` to `DynamicString` → `content`; `$ref` to a
-  `*Props` object → `object` (resolve its fields); `type: array` → `array`
-  (resolve `items` / `oneOf` discriminated union into `itemFields`); else `string`.
+- `loadCatalog(zodSchemas)` → a normalized `CatalogModel`: the Zod schemas are the
+  source of truth. Build a plain JSON-Schema view per component with
+  `z.toJSONSchema(schema)` (Zod 4 native; includes `.meta()`/`.describe()` and the
+  `a2uiSlot` marker), then derive a `PropDescriptor { name, kind, options?, default?,
+  fields?, itemFields?, slot? }` list by traversing that view —
+  `kind ∈ enum | bool | string | number | content | object | array`.
+  Derivation: `enum` → `enum`; `type: boolean` → `bool`; `type: number` → `number`;
+  `$ref` to `DynamicString` → `content`; `$ref` to a `*Props` object → `object`
+  (resolve its fields); `type: array` → `array` (resolve `items`/`oneOf` discriminated
+  union into `itemFields`); else `string`. (Traversing the generated JSON-Schema view
+  is simpler and more stable than walking Zod's internal `_def`. A shipped
+  `catalog.json` may be used instead of generating at runtime — it originates from the
+  same Zod schemas, so the two cannot drift.)
 - `export(surface) → A2UIExport`: walk the tree from `root`, emit a flat
   `components[]`. Content props → `{ literalString }` or `{ path }`; slot children
   → `string[]` of ids; object/array props → nested objects with content fields
@@ -304,8 +318,18 @@ present; otherwise allow any).
   directly): it runs export∘import over a few fixtures and logs any diff. This is the
   correctness guarantee that formal tests would otherwise provide — keep it, even
   without a test runner.
-- `buildValidators(json)` → Ajv validate functions per component; `validate(export)`
-  returns `{ ok, errors }`.
+- `validate(surface) → { ok, issues }`: two independent checks.
+  1. **Prop validation (Zod).** A `schemaRegistry: Record<string, ZodSchema>` is
+     imported from `@pds/core`'s schema entrypoint (type → the component's Zod
+     schema). For each node, `schema.safeParse(node.props)`; map any
+     `z.ZodError.issues` to `{ nodeId, path, message }`. Validate at the **authoring
+     layer** (DocNode props are in component-native shape) — not the A2UI wire shape —
+     so the `DynamicString`/slot-ref wrapping doesn't cause false negatives.
+  2. **Structural integrity (graph).** A small pure check (no Zod): `root` exists,
+     every id in a `children` array resolves to a real node, no cycles, every node has
+     exactly one parent, no orphans. Zod validates values; this validates the
+     adjacency list.
+  Surface both in the Inspector (per-node) and the export panel (whole surface).
 
 ### 7.2 `renderer` package (`@pds/a2ui-react`) — the shared seam
 
@@ -357,7 +381,8 @@ surface root). Show a `slot` / `cfg` affordance per the containment kind.
 add/remove. No `<form>` elements (controlled inputs only).
 
 **Export (`export/`)** — live JSON panel from `export(activeSurface)`, a Copy
-button, a Download button, and an Ajv validation strip (green/red + error list).
+button, a Download button, and a validation strip (green/red + issue list) backed by
+`validate()` — Zod prop issues and structural-integrity issues together.
 
 ### 7.4 `flow-canvas` (`@xyflow/react`)
 
@@ -413,10 +438,12 @@ ESLint/Prettier. Root scripts: `dev`, `build` (`bun run --filter '*' build`),
 *Accept:* `bun install` resolves all workspaces; `bun run dev` runs the composer
 shell; `bun run build` succeeds across packages.
 
-**M1 — schema (pure).** Implement types, `loadCatalog`, `export`, `import`,
-`validate`, and the `roundtrip-guard` dev script. Provide 2–3 A2UI fixtures.
-*Accept:* `bun run check:roundtrip` reports no diff on the fixtures; Ajv passes on
-valid fixtures and fails with useful errors on a broken one.
+**M1 — schema (pure).** Implement types, `loadCatalog` (via `z.toJSONSchema`),
+`export`, `import`, `validate` (Zod prop check + structural graph check), and the
+`roundtrip-guard` dev script. Provide 2–3 A2UI fixtures.
+*Accept:* `bun run check:roundtrip` reports no diff on the fixtures; `validate`
+passes on valid fixtures and returns precise issues (Zod path + structural) on a
+broken one.
 
 **M2 — renderer.** `registry` + recursive `Renderer` + stand-in components + tokens.
 *Accept:* given a fixture surface, `<A2UISurface>` renders without errors and
@@ -457,6 +484,9 @@ re-import each surface round-trips.
 - Do not duplicate the rendering path — composer preview and sandbox both import
   `@pds/a2ui-react`.
 - Keep `registry.ts` as the single swap point between stand-ins and `@pds/core`.
+- Validation = the library's Zod schemas, never Ajv. Inspector descriptors come from
+  `z.toJSONSchema()` of those same schemas (one source of truth). Prop validation at
+  the authoring layer; adjacency-list integrity as a separate structural check.
 - No test framework in the MVP. Keep the `bun run check:roundtrip` dev guard green;
   verify each milestone's acceptance check manually before committing.
 
@@ -478,7 +508,12 @@ Invariants you must preserve:
   the composer preview and the sandbox. Never fork it.
 - The schema package is pure (no React) and is the only home for tree⇆adjacency
   transforms. Keep the dev round-trip guard (bun run check:roundtrip) green.
-- A node is droppable only if it has an x-a2ui-slot property (§5.3, §6).
+- Validation uses the library's own Zod schemas (not Ajv). Derive Inspector
+  descriptors from z.toJSONSchema() of those schemas, so validator and UI share one
+  source. Validate node props at the authoring layer; check adjacency-list integrity
+  separately.
+- A node is droppable only if its schema marks a property with a2uiSlot meta
+  (§5.3, §6).
 - Page layout is flex auto-layout, never absolute x/y.
 
 No automated test framework in the MVP (§2). Verify each milestone's acceptance
@@ -488,8 +523,9 @@ Before each milestone: restate its acceptance check. After each: confirm the che
 and the round-trip guard, then commit.
 
 Open questions to surface to the human rather than guess:
-- exact @pds/core import names / peer versions
-- whether catalog.json will get x-a2ui-slot added (else we use the allowlist fallback)
+- the @pds/core entrypoint that exports the per-component Zod schemas + the
+  type → schema registry; confirm Zod v4 (v4.2.1+)
+- whether the slot props carry a2uiSlot meta (else we use the allowlist fallback)
 - icon handling for IconButton.renderIcon (needs a serializable icon-name field)
 ```
 
@@ -502,7 +538,8 @@ Surface these to the human; they block clean production use but not the MVP:
 1. **No layout primitives** in `catalog.json` (no `Frame`/`Row`/`Column`). MVP adds
    a `Frame` that serializes to A2UI `Column`/`Row`. `CatalogComponentCommon.weight`
    already references Row/Column, so adopt the standard A2UI layout components.
-2. **`children` overload** (content vs slot) — needs `x-a2ui-slot` (§5.3).
+2. **`children` overload** (content vs slot) — mark slot props with `a2uiSlot` meta
+   on the Zod schema (§5.3).
 3. **Function props** — `IconButton.renderIcon` is `type: object` (a React render
    prop) and cannot serialize. Production needs a serializable `icon` enum of names
    the renderer resolves.
