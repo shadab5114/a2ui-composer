@@ -13,10 +13,11 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Redo2, Undo2 } from "lucide-react";
+import { Code2, Redo2, Undo2 } from "lucide-react";
 import { Palette } from "./palette/Palette";
 import { PageCanvas } from "./page-canvas/PageCanvas";
 import { Inspector } from "./inspector/Inspector";
+import { ExportPanel } from "./export/ExportPanel";
 import { useComposer, useUndoRedo } from "./store";
 
 export function App() {
@@ -24,6 +25,7 @@ export function App() {
   const moveNodeToParent = useComposer((s) => s.moveNodeToParent);
   const { undo, redo, canUndo, canRedo } = useUndoRedo();
   const [dragLabel, setDragLabel] = useState<string | null>(null);
+  const [showExport, setShowExport] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -65,6 +67,16 @@ export function App() {
           <span className="font-semibold">PDS → A2UI Composer</span>
           <div className="ml-auto flex items-center gap-1">
             <button
+              onClick={() => setShowExport((v) => !v)}
+              className={`flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-chrome-border ${
+                showExport ? "bg-chrome-border" : ""
+              }`}
+              title="Toggle A2UI export"
+            >
+              <Code2 size={14} /> Export
+            </button>
+            <span className="mx-1 h-4 w-px bg-chrome-border" />
+            <button
               onClick={undo}
               disabled={!canUndo}
               className="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-chrome-border disabled:opacity-30"
@@ -87,8 +99,15 @@ export function App() {
           <aside className="w-56 shrink-0 border-r border-chrome-border bg-chrome-panel">
             <Palette />
           </aside>
-          <main className="min-w-0 flex-1">
-            <PageCanvas />
+          <main className="flex min-w-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1">
+              <PageCanvas />
+            </div>
+            {showExport && (
+              <div className="h-72 shrink-0">
+                <ExportPanel onClose={() => setShowExport(false)} />
+              </div>
+            )}
           </main>
           <aside className="w-80 shrink-0 border-l border-chrome-border bg-chrome-panel">
             <Inspector />
