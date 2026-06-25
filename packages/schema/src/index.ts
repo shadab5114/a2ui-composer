@@ -8,6 +8,8 @@ export { loadCatalog } from "./catalog";
 export * from "./transform";
 export * from "./validate";
 export * from "./factory";
+export { importCode, ImportError } from "./import-code";
+export type { ImportResult, ImportIssue } from "./import-code";
 export { getCatalog, buildValidators, rawCatalog, ICON_NAMES } from "./zod-source";
 export type { Validators } from "./zod-source";
 export {

@@ -13,11 +13,12 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Code2, Layers, LayoutGrid, Redo2, Square, Undo2 } from "lucide-react";
+import { Code2, FileCode2, Layers, LayoutGrid, Redo2, Square, Undo2 } from "lucide-react";
 import { Palette } from "./palette/Palette";
 import { PageCanvas } from "./page-canvas/PageCanvas";
 import { Inspector } from "./inspector/Inspector";
 import { ExportPanel } from "./export/ExportPanel";
+import { ImportDialog } from "./import/ImportDialog";
 import { FlowCanvas } from "./flow-canvas/FlowCanvas";
 import { TreePanel } from "./tree/TreePanel";
 import { catalog, useComposer, useUndoRedo } from "./store";
@@ -42,6 +43,7 @@ export function App() {
   });
   const [showExport, setShowExport] = useState(false);
   const [showTree, setShowTree] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [view, setView] = useState<ViewMode>("page");
 
   const sensors = useSensors(
@@ -120,6 +122,13 @@ export function App() {
 
           <div className="ml-auto flex items-center gap-1">
             <button
+              onClick={() => setShowImport(true)}
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-chrome-border"
+              title="Import existing code as a screen"
+            >
+              <FileCode2 size={14} /> Import
+            </button>
+            <button
               onClick={() => { setShowTree((v) => !v); setShowExport(false); }}
               className={`flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-chrome-border ${
                 showTree ? "bg-chrome-border" : ""
@@ -193,6 +202,13 @@ export function App() {
           </div>
         ) : null}
       </DragOverlay>
+
+      {showImport && (
+        <ImportDialog
+          onClose={() => setShowImport(false)}
+          onImported={() => setView("page")}
+        />
+      )}
     </DndContext>
   );
 }

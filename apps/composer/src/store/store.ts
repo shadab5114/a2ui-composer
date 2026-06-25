@@ -42,6 +42,7 @@ export interface ComposerState {
   reorderChild: (parentId: NodeId, fromIndex: number, toIndex: number) => void;
   removeNode: (nodeId: NodeId) => void;
   addSurface: () => SurfaceId;
+  addSurfaceFromImport: (surface: Surface) => SurfaceId;
   renameSurface: (id: SurfaceId, name: string) => void;
   setSurfacePosition: (id: SurfaceId, position: { x: number; y: number }) => void;
   connectSurfaces: (source: SurfaceId, target: SurfaceId, trigger?: string) => void;
@@ -249,6 +250,24 @@ export const useComposer = create<ComposerState>()(
           });
         });
         return surface.id;
+      },
+
+      addSurfaceFromImport: (surface) => {
+        // Guard against an id collision with an existing surface (nanoid makes this
+        // near-impossible, but a fresh id keeps the flow graph consistent).
+        const id = get().doc.surfaces[surface.id] ? newId() : surface.id;
+        const placed: Surface = { ...surface, id };
+        set((s) => {
+          s.doc.surfaces[id] = placed;
+          const count = s.doc.flow.nodes.length;
+          s.doc.flow.nodes.push({
+            id,
+            position: { x: 80 + (count % 4) * 240, y: 80 + Math.floor(count / 4) * 200 },
+          });
+          s.activeSurfaceId = id;
+          s.selection = { surfaceId: id, nodeId: placed.root };
+        });
+        return id;
       },
 
       renameSurface: (id, name) =>

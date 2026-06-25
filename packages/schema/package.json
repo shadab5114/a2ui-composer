@@ -13,6 +13,8 @@
     "check:roundtrip": "bun run dev/roundtrip-guard.ts"
   },
   "dependencies": {
+    "@babel/parser": "^8.0.0",
+    "@babel/types": "^8.0.0",
     "@shadab5114/pds-core": "1.0.0-alpha.3",
     "nanoid": "^5.0.9",
     "zod": "^4.4.3"
