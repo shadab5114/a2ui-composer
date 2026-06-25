@@ -32,6 +32,7 @@ interface RawSchema {
   oneOf?: RawSchema[];
   anyOf?: RawSchema[];
   "x-a2ui-slot"?: boolean;
+  "x-a2ui-icon-picker"?: boolean;
   [k: string]: unknown;
 }
 
@@ -244,6 +245,7 @@ function derivePropDescriptor(
       kind: "enum",
       options: schema.enum.slice(),
       default: schema.default,
+      ...(schema["x-a2ui-icon-picker"] ? { isIconPicker: true } : {}),
     };
   }
 

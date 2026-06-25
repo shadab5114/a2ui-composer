@@ -6,7 +6,7 @@
  * The MVP wires the real `@shadab5114/pds-core` components directly, plus the
  * synthetic `Frame` layout primitive (no catalog/runtime equivalent yet).
  */
-import type { ComponentType } from "react";
+import React, { type ComponentType } from "react";
 import {
   Accordion,
   AccordionItem,
@@ -30,8 +30,32 @@ import {
   TitleLockupTitle,
   Tooltip,
 } from "@shadab5114/pds-core";
+import * as PdsIcons from "@shadab5114/pds-core/icons";
 import { FRAME_TYPE } from "@pds/a2ui-schema";
 import { Box } from "./standins/Box";
+
+type IconFC = ComponentType<{ size?: string | number; color?: string }>;
+const iconMap = PdsIcons as unknown as Record<string, IconFC>;
+
+/**
+ * Bridges the serializable `icon`/`selectedIcon` string props (ARCHITECTURE §13.3)
+ * to the `renderIcon`/`renderSelectedIcon` render-prop that IconButton expects.
+ */
+function IconButtonAdapter(props: Record<string, unknown>) {
+  const { icon, selectedIcon, ...rest } = props as {
+    icon?: string;
+    selectedIcon?: string;
+    [k: string]: unknown;
+  };
+  const IconComp = icon ? iconMap[icon] : undefined;
+  const SelectedComp = selectedIcon ? iconMap[selectedIcon] : undefined;
+  const adapted: Record<string, unknown> = {
+    ...rest,
+    ...(IconComp ? { renderIcon: (p: object) => React.createElement(IconComp, p as { size?: string | number; color?: string }) } : {}),
+    ...(SelectedComp ? { renderSelectedIcon: (p: object) => React.createElement(SelectedComp, p as { size?: string | number; color?: string }) } : {}),
+  };
+  return React.createElement(IconButton as ComponentType<Record<string, unknown>>, adapted);
+}
 
 // The registry is intentionally heterogeneous (each value has its own prop shape),
 // so its value type is the documented `ComponentType<any>` exception.
@@ -44,7 +68,7 @@ export const registry: Record<string, AnyComponent> = {
   TextLink,
   TextLinkCaret,
   ButtonGroup,
-  IconButton,
+  IconButton: IconButtonAdapter,
   Text,
   Caret,
   DirectionalIcon,

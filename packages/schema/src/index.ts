@@ -8,7 +8,7 @@ export { loadCatalog } from "./catalog";
 export * from "./transform";
 export * from "./validate";
 export * from "./factory";
-export { getCatalog, buildValidators, rawCatalog } from "./zod-source";
+export { getCatalog, buildValidators, rawCatalog, ICON_NAMES } from "./zod-source";
 export type { Validators } from "./zod-source";
 export {
   FRAME_TYPE,

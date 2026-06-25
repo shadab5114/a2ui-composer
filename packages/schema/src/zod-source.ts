@@ -20,6 +20,30 @@ import type { CatalogModel } from "./catalog.types";
 /** Components whose `children` is a slot (id refs), not content. */
 const SLOT_CONTAINERS = new Set(["TileContainer"]);
 
+/**
+ * Serializable icon names from @shadab5114/pds-core/icons.
+ * Resolves ARCHITECTURE §13.3: renderIcon is a function prop and cannot serialize.
+ * The renderer converts the chosen name back into a renderIcon function at render time.
+ */
+export const ICON_NAMES = [
+  "Archive", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp",
+  "Bell", "Calendar", "Camera", "Cart", "Chart", "Check",
+  "ChevronDown", "ChevronLeft", "ChevronRight", "ChevronUp",
+  "Clock", "CloseO", "Close", "Comment", "CreditCard",
+  "Envelope", "Exclamation", "ExternalLink", "Eye", "Gear",
+  "Heart", "Image", "Like", "Link", "Location", "Lock",
+  "Minus", "Navicon", "Paperclip", "Pencil", "Play", "Plus",
+  "Pointer", "Question", "Redo", "Refresh", "Retweet",
+  "ScFacebook", "ScGithub", "ScGooglePlus", "ScInstagram",
+  "ScLinkedin", "ScOdnoklassniki", "ScPinterest", "ScSkype",
+  "ScSoundcloud", "ScTelegram", "ScTumblr", "ScTwitter",
+  "ScVimeo", "ScVk", "ScYoutube",
+  "Search", "ShareApple", "ShareGoogle",
+  "Spinner2", "Spinner3", "Spinner",
+  "Star", "Tag", "Trash", "Trophy",
+  "Undo", "Unlock", "User",
+] as const;
+
 type SchemaMap = Record<string, ZodType>;
 
 const catalogId = (catalogJson as { catalogId: string }).catalogId;
@@ -31,16 +55,28 @@ const componentNames: string[] = Object.keys(
 
 /** Attach the slot marker to a slot container's `children` field. */
 function augment(name: string, schema: ZodType): ZodType {
-  if (!SLOT_CONTAINERS.has(name)) return schema;
   const obj = schema as unknown as {
     shape?: { children?: ZodType };
     extend?: (shape: Record<string, ZodType>) => ZodType;
   };
-  if (obj.shape?.children && typeof obj.extend === "function") {
+
+  if (SLOT_CONTAINERS.has(name)) {
+    if (obj.shape?.children && typeof obj.extend === "function") {
+      return obj.extend({
+        children: obj.shape.children.meta({ "x-a2ui-slot": true }),
+      });
+    }
+    return schema;
+  }
+
+  if (name === "IconButton" && typeof obj.extend === "function") {
+    const iconEnum = z.enum(ICON_NAMES);
     return obj.extend({
-      children: obj.shape.children.meta({ "x-a2ui-slot": true }),
+      icon: iconEnum.optional().meta({ description: "Icon to display", "x-a2ui-icon-picker": true }),
+      selectedIcon: iconEnum.optional().meta({ description: "Icon when selected", "x-a2ui-icon-picker": true }),
     });
   }
+
   return schema;
 }
 

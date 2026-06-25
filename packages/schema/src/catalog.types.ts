@@ -27,6 +27,8 @@ export interface PropDescriptor {
   itemDiscriminator?: string;
   /** true for the slot children property (the only droppable prop) */
   slot?: boolean;
+  /** when true, the inspector renders an icon picker modal instead of a plain dropdown */
+  isIconPicker?: boolean;
 }
 
 export interface ItemVariant {
