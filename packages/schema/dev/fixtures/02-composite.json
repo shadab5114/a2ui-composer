@@ -1,24 +1,34 @@
 {
-  "surfaceUpdate": {
-    "surfaceId": "screen-plans",
-    "catalogId": "https://pdesign.dev/catalog/v1/catalog.json",
-    "root": "root",
-    "components": [
-      { "id": "root", "component": "Row", "children": ["lockup", "bg"], "gap": "6X", "align": "center" },
-      {
-        "id": "lockup",
-        "component": "TitleLockup",
-        "title": { "children": { "literalString": "Plans" }, "size": "titleLarge" },
-        "subtitle": { "children": { "literalString": "Pick the one that fits" } }
-      },
-      {
-        "id": "bg",
-        "component": "ButtonGroup",
-        "items": [
-          { "kind": "primary", "children": { "literalString": "Buy now" } },
-          { "kind": "secondary", "children": { "literalString": "Maybe later" } }
+  "a2ui": [
+    {
+      "version": "v0.9",
+      "createSurface": {
+        "surfaceId": "screen-plans",
+        "catalogId": "https://pdesign.dev/catalog/v1/catalog.json"
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateComponents": {
+        "surfaceId": "screen-plans",
+        "components": [
+          { "id": "root", "component": "Box", "direction": "horizontal", "children": ["lockup", "bg"], "gap": "6X", "align": "center" },
+          {
+            "id": "lockup",
+            "component": "TitleLockup",
+            "title": { "children": { "literalString": "Plans" }, "size": "titleLarge" },
+            "subtitle": { "children": { "literalString": "Pick the one that fits" } }
+          },
+          {
+            "id": "bg",
+            "component": "ButtonGroup",
+            "items": [
+              { "kind": "primary", "children": { "literalString": "Buy now" } },
+              { "kind": "secondary", "children": { "literalString": "Maybe later" } }
+            ]
+          }
         ]
       }
-    ]
-  }
+    }
+  ]
 }

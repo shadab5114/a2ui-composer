@@ -13,13 +13,14 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Code2, LayoutGrid, Redo2, Square, Undo2 } from "lucide-react";
+import { Code2, Layers, LayoutGrid, Redo2, Square, Undo2 } from "lucide-react";
 import { Palette } from "./palette/Palette";
 import { PageCanvas } from "./page-canvas/PageCanvas";
 import { Inspector } from "./inspector/Inspector";
 import { ExportPanel } from "./export/ExportPanel";
 import { FlowCanvas } from "./flow-canvas/FlowCanvas";
-import { useComposer, useUndoRedo } from "./store";
+import { TreePanel } from "./tree/TreePanel";
+import { catalog, useComposer, useUndoRedo } from "./store";
 
 type ViewMode = "page" | "flow";
 
@@ -28,7 +29,19 @@ export function App() {
   const moveNodeToParent = useComposer((s) => s.moveNodeToParent);
   const { undo, redo, canUndo, canRedo } = useUndoRedo();
   const [dragLabel, setDragLabel] = useState<string | null>(null);
+
+  // Track whether the current selection is a slot container so onDragEnd can
+  // use it as the preferred drop target for palette drags (prevents the cursor
+  // accidentally landing on a nested child slot and creating deep nesting).
+  const selectionNodeId = useComposer((s) => s.selection?.nodeId);
+  const selectionIsSlot = useComposer((s) => {
+    const nodeId = s.selection?.nodeId;
+    if (!nodeId) return false;
+    const node = s.doc.surfaces[s.activeSurfaceId]?.nodes[nodeId];
+    return catalog.components[node?.type ?? ""]?.isSlotContainer ?? false;
+  });
   const [showExport, setShowExport] = useState(false);
+  const [showTree, setShowTree] = useState(false);
   const [view, setView] = useState<ViewMode>("page");
 
   const sensors = useSensors(
@@ -58,10 +71,26 @@ export function App() {
     const { active, over } = e;
     if (!over) return;
     const a = active.data.current as { source?: string; type?: string; nodeId?: string } | undefined;
-    const o = over.data.current as { source?: string; nodeId?: string } | undefined;
-    if (!o || o.source !== "slot" || !o.nodeId) return;
-    if (a?.source === "palette" && a.type) addNode(a.type, o.nodeId);
-    else if (a?.source === "node" && a.nodeId) moveNodeToParent(a.nodeId, o.nodeId);
+    const o = over.data.current as { source?: string; nodeId?: string; index?: number } | undefined;
+    if (!o || !o.nodeId) return;
+
+    if (a?.source === "palette" && a.type) {
+      if (o.source === "insert") {
+        // InsertZone hit: precise position, always honor it.
+        addNode(a.type, o.nodeId, o.index);
+      } else {
+        // Slot hit: the cursor landed on a container's droppable area. Prefer the
+        // currently SELECTED slot container so that "I selected horizontal Box and
+        // dragged a Box in" always adds to that Box — not to a nested child whose
+        // droppable happened to win the collision test.
+        const parentId = (selectionNodeId && selectionIsSlot) ? selectionNodeId : o.nodeId;
+        addNode(a.type, parentId);
+      }
+    } else if (a?.source === "node" && a.nodeId) {
+      // Canvas-to-canvas drag: always use the exact drop target.
+      if (o.source === "slot") moveNodeToParent(a.nodeId, o.nodeId);
+      else if (o.source === "insert" && o.index != null) moveNodeToParent(a.nodeId, o.nodeId, o.index);
+    }
   };
 
   return (
@@ -91,7 +120,16 @@ export function App() {
 
           <div className="ml-auto flex items-center gap-1">
             <button
-              onClick={() => setShowExport((v) => !v)}
+              onClick={() => { setShowTree((v) => !v); setShowExport(false); }}
+              className={`flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-chrome-border ${
+                showTree ? "bg-chrome-border" : ""
+              }`}
+              title="Toggle layer tree"
+            >
+              <Layers size={14} /> Layers
+            </button>
+            <button
+              onClick={() => { setShowExport((v) => !v); setShowTree(false); }}
               className={`flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-chrome-border ${
                 showExport ? "bg-chrome-border" : ""
               }`}
@@ -129,6 +167,11 @@ export function App() {
             <div className="min-h-0 flex-1">
               {view === "page" ? <PageCanvas /> : <FlowCanvas onEditScreen={() => setView("page")} />}
             </div>
+            {showTree && (
+              <div className="h-72 shrink-0">
+                <TreePanel />
+              </div>
+            )}
             {showExport && (
               <div className="h-72 shrink-0">
                 <ExportPanel onClose={() => setShowExport(false)} />

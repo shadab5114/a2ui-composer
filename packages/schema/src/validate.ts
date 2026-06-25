@@ -1,15 +1,14 @@
 /**
  * Validation against the design system's own Zod schemas — the same contract the
- * components enforce at runtime (tech-stack pivot away from Ajv). `buildValidators`
- * lives in `zod-source.ts`; this module is the pure consumer of a `Validators` map.
+ * components enforce at runtime. `buildValidators` lives in `zod-source.ts`.
  *
  * Two structural cases the per-component schemas don't cover:
- *  - Layout primitives (Column/Row) aren't catalog components → structural check.
+ *  - Layout primitives (Box / Column / Row) aren't catalog components → structural check.
  *  - A node's `id`/`component` are stripped before parsing (schemas validate props).
  *    Slot `children` (id-ref arrays) pass because the schema types them `z.any()`.
  */
 import type { ZodType } from "zod";
-import type { A2UIComponent, A2UIExport } from "./a2ui.types";
+import type { A2UIComponent, A2UIExport, UpdateComponentsInstruction } from "./a2ui.types";
 import { isA2UILayout } from "./frame";
 
 export interface ValidationError {
@@ -57,7 +56,12 @@ export function validate(
 ): ValidationResult {
   const errors: ValidationError[] = [];
 
-  for (const comp of a2ui.surfaceUpdate.components) {
+  const updateComponentsOp = a2ui.a2ui.find(
+    (op): op is UpdateComponentsInstruction => "updateComponents" in op,
+  );
+  if (!updateComponentsOp) return { ok: true, errors: [] };
+
+  for (const comp of updateComponentsOp.updateComponents.components) {
     if (isA2UILayout(comp.component)) {
       errors.push(...checkLayout(comp));
       continue;

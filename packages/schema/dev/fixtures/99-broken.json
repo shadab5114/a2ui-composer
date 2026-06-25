@@ -1,11 +1,21 @@
 {
-  "surfaceUpdate": {
-    "surfaceId": "screen-broken",
-    "catalogId": "https://pdesign.dev/catalog/v1/catalog.json",
-    "root": "root",
-    "components": [
-      { "id": "root", "component": "Column", "children": ["btn"] },
-      { "id": "btn", "component": "Button", "children": { "literalString": "Oops" }, "kind": "tertiary" }
-    ]
-  }
+  "a2ui": [
+    {
+      "version": "v0.9",
+      "createSurface": {
+        "surfaceId": "screen-broken",
+        "catalogId": "https://pdesign.dev/catalog/v1/catalog.json"
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateComponents": {
+        "surfaceId": "screen-broken",
+        "components": [
+          { "id": "root", "component": "Box", "direction": "vertical", "children": ["btn"] },
+          { "id": "btn", "component": "Button", "children": { "literalString": "Oops" }, "kind": "tertiary" }
+        ]
+      }
+    }
+  ]
 }

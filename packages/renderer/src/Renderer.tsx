@@ -6,11 +6,13 @@
  *  - Looks up `registry[node.type]`; unknown types render a visible Fallback
  *    (never throws).
  *  - Resolves content props (DynamicString) against an optional data model.
- *  - Slot children (id refs) render recursively; Frame applies weight→flex sizing.
+ *  - Slot children (id refs) render recursively; Box applies direction-aware sizing.
  *  - `wrapNode` lets the composer inject per-node editor chrome (selection, dnd)
  *    without forking the render path.
+ *  - `insertZone` (editor-only) injects droppable gaps between siblings so items
+ *    can be dragged to a specific position. Only active while a drag is in progress.
  */
-import React, { type ReactNode } from "react";
+import React, { type CSSProperties, type ReactNode } from "react";
 import type { DocNode, NodeId, Surface } from "@pds/a2ui-schema";
 import { FRAME_TYPE } from "@pds/a2ui-schema";
 import { getComponent } from "./registry";
@@ -21,10 +23,52 @@ export interface RenderOptions {
   dataModel?: DataModel;
   /** Wrap each rendered node — used by the composer for selection/dnd chrome. */
   wrapNode?: (node: DocNode, element: ReactNode) => ReactNode;
+  /**
+   * Editor-only: return a droppable insert-zone element to be placed between
+   * children at position `index` inside Box node `parentId`.
+   * When undefined (sandbox), no zones are rendered.
+   */
+  insertZone?: (parentId: NodeId, index: number, direction: string) => ReactNode;
 }
 
-function flexFor(weight: unknown): string {
-  return typeof weight === "number" && weight > 0 ? `${weight} 1 0%` : "0 0 auto";
+/**
+ * Compute the flex-wrapper style for a child node inside a Box.
+ *
+ * Rules (in priority order):
+ *  1. Explicit `width` / `height` on the child  → pin to that size (flex: 0 0 auto).
+ *  2. Explicit `weight` prop (A2UI flex-grow)    → flex: <weight> 1 0%.
+ *  3. Child is a Box in a HORIZONTAL parent      → flex: 1 1 0% (share width equally).
+ *  4. Everything else                            → flex: 0 0 auto (shrink to content).
+ *
+ * Rationale for rule 3: in a vertical stack, children should wrap their content
+ * and stack naturally; forcing flex:1 on them causes the big-empty-space bug.
+ * In a horizontal row, Boxes should divide the width equally — that is the main
+ * layout-building primitive.
+ */
+function childWrapperStyle(
+  child: DocNode | undefined,
+  isChildBox: boolean,
+  parentDirection: string,
+): CSSProperties {
+  if (!child) return { flex: "0 0 auto", minWidth: 0, minHeight: 0 };
+  const p = child.props as Record<string, unknown>;
+  const hasExplicit = p.width !== undefined || p.height !== undefined;
+
+  const flex = hasExplicit
+    ? "0 0 auto"
+    : typeof p.weight === "number" && p.weight > 0
+      ? `${p.weight} 1 0%`
+      : isChildBox && parentDirection === "horizontal"
+        ? "1 1 0%"   // horizontal Box → children share width equally
+        : "0 0 auto"; // vertical Box / DS components → shrink to content
+
+  return {
+    flex,
+    ...(p.width  !== undefined ? { width:  p.width  as string } : {}),
+    ...(p.height !== undefined ? { height: p.height as string } : {}),
+    minWidth: 0,
+    minHeight: 0,
+  };
 }
 
 export function renderNode(
@@ -42,17 +86,35 @@ export function renderNode(
   if (!Comp) {
     element = <Fallback type={node.type} />;
   } else if (node.children) {
-    const isFrame = node.type === FRAME_TYPE;
-    const kids = node.children.map((childId) => {
+    const isBox = node.type === FRAME_TYPE;
+    const parentDir = (node.props.direction as string | undefined) ?? "vertical";
+
+    const wrappedChild = (childId: NodeId) => {
       const childEl = renderNode(childId, nodes, options);
-      if (!isFrame) return childEl;
-      const flex = flexFor(nodes[childId]?.props.weight);
+      if (!isBox) return childEl;
+      const childNode = nodes[childId];
       return (
-        <div key={childId} style={{ flex, minWidth: 0, minHeight: 0 }}>
+        <div key={childId} style={childWrapperStyle(childNode, childNode?.type === FRAME_TYPE, parentDir)}>
           {childEl}
         </div>
       );
-    });
+    };
+
+    let kids: ReactNode[];
+    if (isBox && options.insertZone) {
+      // Interleave insert zones so the user can drag-to-position between siblings.
+      const iz = options.insertZone;
+      kids = [];
+      for (let i = 0; i < node.children.length; i++) {
+        kids.push(iz(node.id, i, parentDir));
+        kids.push(wrappedChild(node.children[i]));
+      }
+      // Trailing zone (after last child, or the only zone in an empty container).
+      kids.push(iz(node.id, node.children.length, parentDir));
+    } else {
+      kids = node.children.map(wrappedChild);
+    }
+
     element = <Comp {...resolved}>{kids}</Comp>;
   } else {
     element = <Comp {...resolved} />;
@@ -68,15 +130,17 @@ export interface A2UISurfaceProps {
   surface: Surface;
   dataModel?: DataModel;
   wrapNode?: RenderOptions["wrapNode"];
+  insertZone?: RenderOptions["insertZone"];
 }
 
 /** Render a whole surface. Used by BOTH the composer preview and the sandbox. */
-export function A2UISurface({ surface, dataModel, wrapNode }: A2UISurfaceProps) {
+export function A2UISurface({ surface, dataModel, wrapNode, insertZone }: A2UISurfaceProps) {
   return (
     <>
       {renderNode(surface.root, surface.nodes, {
         dataModel: dataModel ?? surface.dataModel,
         wrapNode,
+        insertZone,
       })}
     </>
   );

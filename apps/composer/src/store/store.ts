@@ -31,6 +31,7 @@ export interface ComposerState {
 
   // selection / navigation (not undoable)
   setSelection: (sel: Selection | null) => void;
+  selectParent: (nodeId: NodeId) => void;
   setActiveSurface: (id: SurfaceId) => void;
 
   // document mutations (undoable)
@@ -112,6 +113,14 @@ export const useComposer = create<ComposerState>()(
           s.selection = sel;
         }),
 
+      selectParent: (nodeId) => {
+        const { doc, activeSurfaceId } = get();
+        const surface = doc.surfaces[activeSurfaceId];
+        if (!surface) return;
+        const parentId = findParentId(surface, nodeId);
+        if (parentId) set((s) => { s.selection = { surfaceId: activeSurfaceId, nodeId: parentId }; });
+      },
+
       setActiveSurface: (id) =>
         set((s) => {
           s.activeSurfaceId = id;
@@ -124,6 +133,7 @@ export const useComposer = create<ComposerState>()(
         if (!surface) return null;
 
         // Resolve the drop parent: explicit arg → selected slot → surface root.
+        const wasExplicit = parentId != null;
         let target = parentId;
         if (!target) {
           const sel = state.selection?.nodeId;
@@ -139,7 +149,15 @@ export const useComposer = create<ComposerState>()(
           parent.children ??= [];
           const at = index ?? parent.children.length;
           parent.children.splice(at, 0, node.id);
-          s.selection = { surfaceId: surf.id, nodeId: node.id };
+          // Drag drops (explicit target) → select the new node so the user can
+          // inspect it immediately. Palette clicks (no explicit target) → keep the
+          // parent selected so the next palette click adds a sibling, not a nested
+          // child — this is what makes "add Box, add Box" produce two siblings in a
+          // horizontal row rather than a nesting chain.
+          s.selection = {
+            surfaceId: surf.id,
+            nodeId: wasExplicit ? node.id : target!,
+          };
         });
         return node.id;
       },
@@ -174,13 +192,25 @@ export const useComposer = create<ComposerState>()(
           if (subtree.has(newParentId)) return;
 
           const oldParentId = findParentId(surf, nodeId);
+
+          // When reordering within the same parent, the removal of the node shifts
+          // all subsequent indices down by 1 — adjust the target to compensate.
+          let insertAt = index;
+          if (insertAt != null && oldParentId === newParentId) {
+            const siblings = surf.nodes[oldParentId]?.children ?? [];
+            const fromIdx = siblings.indexOf(nodeId);
+            // Dropping into the zone immediately before or after self → no-op.
+            if (insertAt === fromIdx || insertAt === fromIdx + 1) return;
+            if (fromIdx < insertAt) insertAt = insertAt - 1;
+          }
+
           if (oldParentId) {
             const sib = surf.nodes[oldParentId].children!;
             sib.splice(sib.indexOf(nodeId), 1);
           }
           const dest = surf.nodes[newParentId];
           dest.children ??= [];
-          const at = index ?? dest.children.length;
+          const at = insertAt ?? dest.children.length;
           dest.children.splice(at, 0, nodeId);
           s.selection = { surfaceId: surf.id, nodeId };
         }),

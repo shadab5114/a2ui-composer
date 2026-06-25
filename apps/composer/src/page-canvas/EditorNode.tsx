@@ -7,8 +7,9 @@
  */
 import { type ReactNode, useCallback } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
-import { ChevronDown, ChevronUp, GripVertical, Trash2 } from "lucide-react";
+import { ArrowUpToLine, ChevronDown, ChevronUp, GripVertical, Trash2 } from "lucide-react";
 import type { DocNode } from "@pds/a2ui-schema";
+import { FRAME_TYPE } from "@pds/a2ui-schema";
 import { catalog, useComposer } from "../store";
 
 function mergeRefs<T>(...refs: Array<(node: T | null) => void>) {
@@ -25,16 +26,22 @@ export function EditorNode({ node, children }: { node: DocNode; children: ReactN
   const activeSurfaceId = useComposer((s) => s.activeSurfaceId);
   const moveNode = useComposer((s) => s.moveNode);
   const removeNode = useComposer((s) => s.removeNode);
+  const selectParent = useComposer((s) => s.selectParent);
 
   const draggable = useDraggable({
     id: node.id,
     data: { source: "node", nodeId: node.id },
     disabled: isRoot,
   });
+  // Box nodes with existing children delegate all drops to their InsertZones
+  // (rendered by the Renderer between each sibling pair). Disabling the slot
+  // droppable prevents a large child Box from winning the dnd-kit collision test
+  // and swallowing drops that the user intended for the parent Box.
+  const boxHasChildren = node.type === FRAME_TYPE && !!node.children?.length;
   const droppable = useDroppable({
     id: `slot:${node.id}`,
     data: { source: "slot", nodeId: node.id },
-    disabled: !isSlot,
+    disabled: !isSlot || boxHasChildren,
   });
 
   const onSelect = useCallback(
@@ -44,6 +51,8 @@ export function EditorNode({ node, children }: { node: DocNode; children: ReactN
     },
     [setSelection, activeSurfaceId, node.id],
   );
+
+  const isEmpty = isSlot && !node.children?.length;
 
   return (
     <div
@@ -60,15 +69,28 @@ export function EditorNode({ node, children }: { node: DocNode; children: ReactN
         outlineOffset: 1,
         borderRadius: 4,
         opacity: draggable.isDragging ? 0.5 : 1,
+        // Root fills its flex parent (the screen frame wrapper).
+        ...(isRoot
+          ? { flex: 1, display: "flex", flexDirection: "column" }
+          : { minHeight: isEmpty ? 80 : undefined }),
       }}
     >
       {selected && (
         <div
-          style={{ position: "absolute", top: -26, right: 0, zIndex: 20 }}
+          style={{ position: "absolute", top: 4, right: 4, zIndex: 30 }}
           className="flex items-center gap-0.5 rounded bg-chrome-panel px-1 py-0.5 shadow"
           onClick={(e) => e.stopPropagation()}
         >
           <span className="px-1 text-[10px] text-chrome-muted">{node.type}</span>
+          {!isRoot && (
+            <button
+              onClick={() => selectParent(node.id)}
+              className="rounded p-0.5 text-chrome-muted hover:bg-chrome-border"
+              title="Select parent"
+            >
+              <ArrowUpToLine size={12} />
+            </button>
+          )}
           {!isRoot && (
             <button
               ref={draggable.setActivatorNodeRef}
@@ -106,6 +128,29 @@ export function EditorNode({ node, children }: { node: DocNode; children: ReactN
         </div>
       )}
       {children}
+      {/* Placeholder shown only when the slot is empty — gives a drop target and visual cue. */}
+      {isEmpty && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 4,
+            fontSize: 11,
+            color: droppable.isOver ? "#5b8cff" : "#8b8b93",
+            border: `1px dashed ${droppable.isOver ? "#5b8cff" : "#4a4a55"}`,
+            borderRadius: 4,
+            background: droppable.isOver ? "rgba(91,140,255,0.06)" : "transparent",
+            pointerEvents: "none",
+            transition: "color 0.1s, border-color 0.1s, background 0.1s",
+          }}
+        >
+          <span style={{ fontSize: 14 }}>+</span>
+          {node.type} · drop here
+        </div>
+      )}
     </div>
   );
 }

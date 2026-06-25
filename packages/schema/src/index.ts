@@ -17,7 +17,6 @@ export {
   SPACE_TOKENS,
   frameComponentModel,
   frameDefaultProps,
-  frameToA2UIComponent,
   isA2UILayout,
 } from "./frame";
 

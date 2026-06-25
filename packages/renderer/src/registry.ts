@@ -31,7 +31,7 @@ import {
   Tooltip,
 } from "@shadab5114/pds-core";
 import { FRAME_TYPE } from "@pds/a2ui-schema";
-import { Frame } from "./standins/Frame";
+import { Box } from "./standins/Box";
 
 // The registry is intentionally heterogeneous (each value has its own prop shape),
 // so its value type is the documented `ComponentType<any>` exception.
@@ -39,7 +39,7 @@ import { Frame } from "./standins/Frame";
 export type AnyComponent = ComponentType<any>;
 
 export const registry: Record<string, AnyComponent> = {
-  [FRAME_TYPE]: Frame,
+  [FRAME_TYPE]: Box,
   Button,
   TextLink,
   TextLinkCaret,

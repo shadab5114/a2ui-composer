@@ -1,7 +1,14 @@
 /**
- * A2UI wire types — the export target. Mirrors the catalog's flat, adjacency-list
- * shape: every component is an object with a `component` discriminator and sibling
- * props, referenced by id.
+ * A2UI wire types — the export target.
+ *
+ * The document is a versioned instruction array (`{ "a2ui": [...] }`). Each
+ * instruction carries a `"version"` discriminator and exactly one named operation
+ * key. The three operations used by the composer are:
+ *
+ *   createSurface      — declares the surface and pins the catalog.
+ *   updateDataModel    — sets the data at a JSON-Pointer path (/ = root).
+ *   updateComponents   — replaces the full component tree (DFS pre-order; first
+ *                        component is the root).
  */
 
 /** A bindable string: either a literal or a JSON-Pointer path into the data model. */
@@ -17,26 +24,46 @@ export function isDynamicString(v: unknown): v is DynamicString {
 
 export interface A2UIComponent {
   id: string;
-  component: string; // "Button", "Column", "Row", ...
+  component: string; // "Box", "Button", "TitleLockup", ...
   /** id refs (slot children) OR content (DynamicString). Resolved per catalog. */
   children?: string[] | DynamicString;
   [prop: string]: unknown;
 }
 
-export interface SurfaceUpdate {
-  surfaceId: string;
-  catalogId: string;
-  root: string;
-  components: A2UIComponent[];
+// ── Instruction shapes ────────────────────────────────────────────────────────
+
+export interface CreateSurfaceInstruction {
+  version: "v0.9";
+  createSurface: {
+    surfaceId: string;
+    catalogId: string;
+  };
 }
 
-export interface DataModelUpdate {
-  surfaceId: string;
-  /** JSON-Pointer keyed bound values collected from `{ path }` props. */
-  contents: Record<string, unknown>;
+export interface UpdateDataModelInstruction {
+  version: "v0.9";
+  updateDataModel: {
+    surfaceId: string;
+    /** JSON-Pointer to set. Use "/" for the root data object. */
+    path: string;
+    value: Record<string, unknown>;
+  };
 }
+
+export interface UpdateComponentsInstruction {
+  version: "v0.9";
+  updateComponents: {
+    surfaceId: string;
+    /** DFS pre-order; the first entry is always the root component. */
+    components: A2UIComponent[];
+  };
+}
+
+export type A2UIInstruction =
+  | CreateSurfaceInstruction
+  | UpdateDataModelInstruction
+  | UpdateComponentsInstruction;
 
 export interface A2UIExport {
-  surfaceUpdate: SurfaceUpdate;
-  dataModelUpdate?: DataModelUpdate;
+  a2ui: A2UIInstruction[];
 }
