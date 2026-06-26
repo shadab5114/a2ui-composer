@@ -79,6 +79,7 @@ export interface BoxProps {
   justify?: string;
   align?: string;
   overflow?: string;
+  wrap?: boolean;
   children?: ReactNode;
 }
 
@@ -97,6 +98,7 @@ export function Box({
   justify,
   align = "stretch",
   overflow,
+  wrap,
   children,
 }: BoxProps) {
   const resolvedBr   = br(borderRadius);
@@ -109,6 +111,7 @@ export function Box({
   const style: CSSProperties = {
     display:         "flex",
     flexDirection:   direction === "horizontal" ? "row" : "column",
+    flexWrap:        wrap ? "wrap" : undefined,
     gap:             px(gap)     ?? (gap     as string | undefined),
     padding:         px(padding) ?? (padding as string | undefined),
     justifyContent:  justify ? (JUSTIFY[justify] ?? justify) : undefined,

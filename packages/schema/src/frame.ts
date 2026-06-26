@@ -60,6 +60,12 @@ const boxProps: PropDescriptor[] = [
     default: "start",
     description: "Main-axis distribution of children.",
   },
+  {
+    name: "wrap",
+    kind: "bool",
+    description:
+      "Allow children to wrap onto multiple lines (flex-wrap). The auto-layout way to build a reflowing card grid.",
+  },
 
   // ── Size ─────────────────────────────────────────────────────────────────
   {

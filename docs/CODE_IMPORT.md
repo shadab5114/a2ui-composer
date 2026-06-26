@@ -169,6 +169,50 @@ drop**.
 - **Content components** (a `children` of kind `content`, e.g. `Text`, `Badge`):
   text children fold into `children: { literalString }`. Nested elements → warn.
 
+### 4.5 Static evaluation & list unrolling (deterministic, no AI)
+
+The snippet is parsed as a **module**, so top-level `const` declarations with
+statically-evaluable values (array / object / primitive literals) are collected
+into a **scope**. That scope powers three things, all deterministic:
+
+- **Identifier & member resolution** — `ariaLabel={tile.ariaLabel}`,
+  `title={{ children: tile.title }}`, and `` `${label} 16` `` resolve against the
+  scope instead of being dropped as non-serializable.
+- **`.map` unrolling** — `{arr.map((item, i) => <JSX/>)}` over a statically-known
+  array expands to one concrete node per element, with `item`/`i` bound per
+  iteration. The classic "data array + `.map` grid of cards" snippet imports fully.
+- **Conditional children** — `{cond && <X/>}` and `{cond ? <A/> : <B/>}` pick a
+  branch when the condition resolves from scope.
+
+When the list data **isn't** statically present (`props.tiles.map(...)`, a hook,
+or an imported array), there is nothing to unroll — the list is dropped with a
+warning pointing the user to paste the data array alongside the markup (this is the
+case the optional AI-align layer is meant to cover). Two more deterministic aids:
+
+- **Component-name aliasing** — an unknown capitalized tag is retried with a
+  `Component`/`Widget`/`View`/`Cmp` suffix stripped (`TileletComponent` →
+  `Tilelet`), warned when it matches.
+- **CSS grid → wrapping row Box** — `display:grid` maps to a horizontal Box with
+  `wrap: true`, so a card grid reflows onto multiple lines instead of jamming into
+  one row. The exact column count isn't pinned (flex-wrap, not fixed tracks), which
+  is warned.
+
+### 4.6 Box change required for grid support
+
+Grid import depends on a `wrap` prop on the synthetic `Box`. It was added in three
+places that must stay in sync (the standard `registry.ts` swap seam):
+
+| File | Change |
+|---|---|
+| [frame.ts](../packages/schema/src/frame.ts) | `wrap` bool `PropDescriptor` on `boxProps` → Inspector toggle + serializes like any Box prop |
+| [Box.tsx](../packages/renderer/src/standins/Box.tsx) | `flexWrap: wrap ? "wrap" : undefined` in the stand-in style |
+| [import-code.ts](../packages/schema/src/import-code.ts) | `translateStyle` sets `wrap: true` when `display:grid` |
+
+`wrap` has **no default**, so it only appears in export when set (no noise on
+ordinary Boxes). Like the rest of `Box`, it's part of the synthetic-primitive
+contract: when a real A2UI `Row` replaces the stand-in via `registry.ts`, that
+component must honor a wrap field (ARCHITECTURE §13.1).
+
 ---
 
 ## 5. Warning / error model
@@ -233,15 +277,23 @@ collects `path`s into the data model.
 
 ## 7. Known limitations (current version)
 
-1. **Non-serializable props are dropped** (functions, variables, calls, spreads) —
-   by necessity; they can't be represented in static A2UI. All warned.
-2. **Mixed text + elements** inside a content component (e.g. `<p>a <span/> b</p>`)
+1. **Non-static props are dropped** (function props, variables/data not present in
+   the snippet, runtime calls). Values that *can* be resolved from a top-level
+   `const` are kept (see §4.5). All drops are warned.
+2. **Dynamic lists with off-snippet data** can't be unrolled — `props.x.map(...)`,
+   hooks, or imported arrays have no static value. A literal array in the same
+   paste unrolls fully (§4.5).
+3. **Mixed text + elements** inside a content component (e.g. `<p>a <span/> b</p>`)
    drops the nested element. Warned.
-3. **Off-token CSS** is snapped to the nearest design token (lossy but on-brand);
+4. **Off-token CSS** is snapped to the nearest design token (lossy but on-brand);
    non-token CSS props are dropped. Both warned.
-4. **`className`** is ignored (no stylesheet resolution). Warned.
-5. **Unknown components** are preserved but fail export validation until renamed to
-   a catalog component.
+5. **CSS grid column count isn't pinned** — `display:grid` maps to a wrapping
+   horizontal Box (`wrap: true`, see §4.6), so cards reflow across lines, but the
+   exact `repeat(N, …)` column count is not enforced. Warned.
+6. **`className`** is ignored (no stylesheet resolution). Warned.
+7. **Unknown components** are preserved but fail export validation until renamed to
+   a catalog component (suffix aliases like `XComponent`→`X` are resolved
+   automatically).
 
 ---
 

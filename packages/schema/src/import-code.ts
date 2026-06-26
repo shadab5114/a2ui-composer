@@ -14,9 +14,17 @@
  * `Box`, and inline `style` is translated to Box layout props (token-snapped where
  * Box expects a design token, raw CSS otherwise). Anything that cannot be cleanly
  * represented is surfaced as a warning rather than silently dropped.
+ *
+ * Static evaluation: the input is parsed as a module, so top-level `const`
+ * declarations with statically-evaluable values (array/object/primitive literals)
+ * are collected into a scope. That scope lets us resolve `{item.field}` prop values
+ * and **unroll `arr.map(item => <JSX/>)`** over a literal array into concrete nodes
+ * — no runtime, no AI. Lists whose data isn't statically present are surfaced as a
+ * warning, not silently dropped.
  */
-import { parseExpression } from "@babel/parser";
+import { parse, parseExpression } from "@babel/parser";
 import type {
+  CallExpression,
   Expression,
   JSXAttribute,
   JSXElement,
@@ -51,6 +59,13 @@ export class ImportError extends Error {
   }
 }
 
+/** Statically-known bindings (from `const` decls + `.map` loop variables). */
+type Scope = Record<string, unknown>;
+const EMPTY_SCOPE: Scope = {};
+
+/** A JSX child node, as found in `JSXElement.children` (also covers our roots). */
+type JSXChild = JSXElement["children"][number];
+
 // ── HTML element mapping ──────────────────────────────────────────────────────
 
 /** Lowercase HTML tags whose content is text → mapped to the `Text` component. */
@@ -80,6 +95,20 @@ const HTML_TO_CATALOG: Record<string, string> = {
   img: "Image",
   a: "TextLink",
 };
+
+/** Component-name suffixes stripped when matching an unknown tag to the catalog. */
+const COMPONENT_SUFFIXES = ["Component", "Widget", "View", "Cmp"];
+
+/** Map `TileletComponent` → `Tilelet` when only the suffixed name was used. */
+function stripComponentSuffix(tag: string): string | null {
+  for (const suffix of COMPONENT_SUFFIXES) {
+    if (tag.length > suffix.length && tag.endsWith(suffix)) {
+      const base = tag.slice(0, -suffix.length);
+      if (/^[A-Z]/.test(base)) return base;
+    }
+  }
+  return null;
+}
 
 // ── CSS → Box-prop translation ────────────────────────────────────────────────
 
@@ -129,14 +158,14 @@ function snap(px: number, scale: Array<[number, string]>): { token: string; exac
 
 // ── Static evaluation of JSX expression values ────────────────────────────────
 
-/** Marker returned for AST we cannot statically serialize (functions, identifiers, …). */
+/** Marker returned for AST we cannot statically serialize (functions, calls, …). */
 const UNSERIALIZABLE = Symbol("unserializable");
 
 /**
- * Convert a Babel expression to a plain JS value, or `UNSERIALIZABLE` if it
- * depends on runtime (identifiers, calls, JSX, spreads, …).
+ * Convert a Babel expression to a plain JS value against `scope`, or
+ * `UNSERIALIZABLE` if it depends on runtime state not present in scope.
  */
-function evalNode(node: BabelNode | null | undefined): unknown {
+function evalNode(node: BabelNode | null | undefined, scope: Scope = EMPTY_SCOPE): unknown {
   if (!node) return undefined;
   switch (node.type) {
     case "StringLiteral":
@@ -146,14 +175,36 @@ function evalNode(node: BabelNode | null | undefined): unknown {
     case "NullLiteral":
       return null;
     case "Identifier":
-      return node.name === "undefined" ? undefined : UNSERIALIZABLE;
-    case "TemplateLiteral":
-      return node.expressions.length === 0 && node.quasis.length === 1
-        ? node.quasis[0].value.cooked ?? node.quasis[0].value.raw
-        : UNSERIALIZABLE;
+      if (node.name === "undefined") return undefined;
+      return node.name in scope ? scope[node.name] : UNSERIALIZABLE;
+    case "MemberExpression":
+    case "OptionalMemberExpression": {
+      const obj = evalNode(node.object as BabelNode, scope);
+      if (obj === UNSERIALIZABLE || obj == null || typeof obj !== "object") return UNSERIALIZABLE;
+      let key: string | number | null = null;
+      if (!node.computed && node.property.type === "Identifier") key = node.property.name;
+      else if (node.computed) {
+        const k = evalNode(node.property as BabelNode, scope);
+        if (typeof k === "string" || typeof k === "number") key = k;
+      }
+      if (key === null) return UNSERIALIZABLE;
+      return (obj as Record<string | number, unknown>)[key];
+    }
+    case "TemplateLiteral": {
+      let out = "";
+      for (let i = 0; i < node.quasis.length; i++) {
+        out += node.quasis[i].value.cooked ?? node.quasis[i].value.raw;
+        if (i < node.expressions.length) {
+          const v = evalNode(node.expressions[i] as BabelNode, scope);
+          if (v === UNSERIALIZABLE || v == null || typeof v === "object") return UNSERIALIZABLE;
+          out += String(v);
+        }
+      }
+      return out;
+    }
     case "UnaryExpression":
       if (node.operator === "-") {
-        const inner = evalNode(node.argument);
+        const inner = evalNode(node.argument, scope);
         return typeof inner === "number" ? -inner : UNSERIALIZABLE;
       }
       return UNSERIALIZABLE;
@@ -163,9 +214,11 @@ function evalNode(node: BabelNode | null | undefined): unknown {
         if (el === null) {
           out.push(null);
         } else if (el.type === "SpreadElement") {
-          return UNSERIALIZABLE;
+          const spread = evalNode(el.argument, scope);
+          if (!Array.isArray(spread)) return UNSERIALIZABLE;
+          out.push(...spread);
         } else {
-          const v = evalNode(el);
+          const v = evalNode(el, scope);
           if (v === UNSERIALIZABLE) return UNSERIALIZABLE;
           out.push(v);
         }
@@ -173,15 +226,26 @@ function evalNode(node: BabelNode | null | undefined): unknown {
       return out;
     }
     case "ObjectExpression":
-      return evalObject(node);
+      return evalObject(node, scope);
+    case "ParenthesizedExpression":
+      return evalNode(node.expression, scope);
     default:
       return UNSERIALIZABLE;
   }
 }
 
-function evalObject(node: ObjectExpression): Record<string, unknown> | typeof UNSERIALIZABLE {
+function evalObject(
+  node: ObjectExpression,
+  scope: Scope,
+): Record<string, unknown> | typeof UNSERIALIZABLE {
   const out: Record<string, unknown> = {};
   for (const prop of node.properties) {
+    if (prop.type === "SpreadElement") {
+      const spread = evalNode(prop.argument, scope);
+      if (spread === UNSERIALIZABLE || !isPlainObject(spread)) return UNSERIALIZABLE;
+      Object.assign(out, spread);
+      continue;
+    }
     if (prop.type !== "ObjectProperty" || prop.computed) return UNSERIALIZABLE;
     const key =
       prop.key.type === "Identifier"
@@ -190,7 +254,7 @@ function evalObject(node: ObjectExpression): Record<string, unknown> | typeof UN
           ? prop.key.value
           : null;
     if (key === null) return UNSERIALIZABLE;
-    const value = evalNode(prop.value as BabelNode);
+    const value = evalNode(prop.value as BabelNode, scope);
     if (value === UNSERIALIZABLE) return UNSERIALIZABLE;
     out[key] = value;
   }
@@ -199,8 +263,9 @@ function evalObject(node: ObjectExpression): Record<string, unknown> | typeof UN
 
 // ── Descriptor-driven value coercion ──────────────────────────────────────────
 
-const isPlainObject = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
 
 /**
  * Coerce a statically-evaluated JS value into internal DocNode prop shape, guided
@@ -297,13 +362,13 @@ function jsxName(
 }
 
 /** Pull the JS value out of a JSX attribute (`foo="x"`, `foo={…}`, or bare `foo`). */
-function attrValue(attr: JSXAttribute): unknown {
+function attrValue(attr: JSXAttribute, scope: Scope): unknown {
   const v = attr.value;
   if (v === null || v === undefined) return true; // bare boolean attribute
   if (v.type === "StringLiteral") return v.value;
   if (v.type === "JSXExpressionContainer") {
     if (v.expression.type === "JSXEmptyExpression") return undefined;
-    return evalNode(v.expression as BabelNode);
+    return evalNode(v.expression as BabelNode, scope);
   }
   return UNSERIALIZABLE; // JSXElement / JSXFragment as an attribute value
 }
@@ -333,20 +398,23 @@ function translateStyle(
     });
 
   const isFlex = style.display === "flex" || style.display === "inline-flex";
+  const isGrid = style.display === "grid" || style.display === "inline-grid";
 
   for (const [prop, raw] of Object.entries(style)) {
     switch (prop) {
       case "display":
-        if (raw !== "flex" && raw !== "inline-flex" && raw !== "block" && raw !== undefined) {
-          warnings.push({ level: "warning", context: ctx, message: `display: ${String(raw)} not supported — treated as a flex Box.` });
-        }
+        if (isGrid || isFlex || raw === "block" || raw === undefined) break;
+        warnings.push({ level: "warning", context: ctx, message: `display: ${String(raw)} not supported — treated as a flex Box.` });
         break;
       case "flexDirection":
         out.direction = raw === "row" || raw === "row-reverse" ? "horizontal" : "vertical";
         break;
       case "gap":
       case "rowGap":
-      case "columnGap": {
+      case "columnGap":
+      case "gridGap":
+      case "gridRowGap":
+      case "gridColumnGap": {
         const n = parsePx(raw);
         if (n === null) { out.gap = raw; break; }
         const { token, exact } = snap(n, SPACE_SCALE);
@@ -374,6 +442,15 @@ function translateStyle(
         else warnings.push({ level: "warning", context: ctx, message: `alignItems: ${String(raw)} has no Box equivalent — dropped.` });
         break;
       }
+      case "gridTemplateColumns":
+        warnings.push({ level: "warning", context: ctx, message: `${prop}: grid mapped to a wrapping flex row (Box wrap) — the exact column count is not pinned.` });
+        break;
+      case "gridTemplateRows":
+      case "gridAutoFlow":
+      case "gridAutoColumns":
+      case "gridAutoRows":
+        warnings.push({ level: "warning", context: ctx, message: `${prop}: grid-specific layout has no Box equivalent — dropped.` });
+        break;
       case "width": out.width = String(raw); break;
       case "height": out.height = String(raw); break;
       case "background":
@@ -403,10 +480,12 @@ function translateStyle(
     }
   }
 
-  // A flex container with no explicit direction defaults to row in CSS.
-  if (isFlex && out.direction === undefined && style.flexDirection === undefined) {
+  // A flex/grid container with no explicit direction defaults to a row.
+  if ((isFlex || isGrid) && out.direction === undefined && style.flexDirection === undefined) {
     out.direction = "horizontal";
   }
+  // A grid is a reflowing row of cards → a wrapping flex Box.
+  if (isGrid) out.wrap = true;
   return out;
 }
 
@@ -421,7 +500,8 @@ interface BuildCtx {
 /** Resolve a JSX tag to a catalog/Box/Text type plus seeded props. */
 function resolveTag(
   tag: string,
-): { type: string; seedProps: Record<string, unknown>; textTag: boolean } {
+  catalog: CatalogModel,
+): { type: string; seedProps: Record<string, unknown>; textTag: boolean; aliasedFrom?: string } {
   if (HTML_TO_CATALOG[tag]) {
     return { type: HTML_TO_CATALOG[tag], seedProps: {}, textTag: false };
   }
@@ -437,7 +517,13 @@ function resolveTag(
   if (tag[0] === tag[0].toLowerCase()) {
     return { type: FRAME_TYPE, seedProps: {}, textTag: false };
   }
-  // Capitalized → assume a catalog component name (validated by caller).
+  // Capitalized → a catalog component. Try the exact name, then a suffix-stripped
+  // alias (e.g. `TileletComponent` → `Tilelet`) before giving up.
+  if (catalog.components[tag]) return { type: tag, seedProps: {}, textTag: false };
+  const base = stripComponentSuffix(tag);
+  if (base && catalog.components[base]) {
+    return { type: base, seedProps: {}, textTag: false, aliasedFrom: tag };
+  }
   return { type: tag, seedProps: {}, textTag: false };
 }
 
@@ -454,12 +540,18 @@ function makeText(ctx: BuildCtx, text: string): NodeId {
   return id;
 }
 
-function buildElement(el: JSXElement, ctx: BuildCtx): NodeId {
+function buildElement(el: JSXElement, ctx: BuildCtx, scope: Scope): NodeId {
   const tag = jsxName(el.openingElement.name);
-  const { type, seedProps, textTag } = resolveTag(tag);
+  const { type, seedProps, textTag, aliasedFrom } = resolveTag(tag, ctx.catalog);
   const model: ComponentModel | undefined = ctx.catalog.components[type];
 
-  if (!model && type === tag && /^[A-Z]/.test(tag)) {
+  if (aliasedFrom) {
+    ctx.warnings.push({
+      level: "warning",
+      context: aliasedFrom,
+      message: `mapped <${aliasedFrom}> to catalog component "${type}".`,
+    });
+  } else if (!model && type === tag && /^[A-Z]/.test(tag)) {
     ctx.warnings.push({
       level: "warning",
       context: tag,
@@ -471,18 +563,28 @@ function buildElement(el: JSXElement, ctx: BuildCtx): NodeId {
 
   for (const attr of el.openingElement.attributes) {
     if (attr.type === "JSXSpreadAttribute") {
-      ctx.warnings.push({ level: "warning", context: tag, message: `spread attribute {...} cannot be resolved statically — dropped.` });
+      // Statically-resolvable spread (e.g. {...tile}) is folded in; otherwise warn.
+      const spread = evalNode(attr.argument as BabelNode, scope);
+      if (isPlainObject(spread)) {
+        for (const [k, v] of Object.entries(spread)) {
+          const desc = model?.props.find((p) => p.name === k);
+          const coerced = coerceValue(v, desc, `${tag}.${k}`, ctx.warnings);
+          if (coerced !== undefined) props[k] = coerced;
+        }
+      } else {
+        ctx.warnings.push({ level: "warning", context: tag, message: `spread attribute {...} cannot be resolved statically — dropped.` });
+      }
       continue;
     }
     const name = attr.name.type === "JSXIdentifier" ? attr.name.name : jsxName(attr.name);
 
     if (name === "key" || name === "ref") continue;
     if (name === "className" || name === "class") {
-      ctx.warnings.push({ level: "warning", context: `${tag}.className`, message: `className "${describe(attr)}" cannot be resolved (no external stylesheet) — dropped.` });
+      ctx.warnings.push({ level: "warning", context: `${tag}.className`, message: `className cannot be resolved (no external stylesheet) — dropped.` });
       continue;
     }
     if (name === "style") {
-      const raw = attrValue(attr);
+      const raw = attrValue(attr, scope);
       if (isPlainObject(raw)) {
         const boxProps = translateStyle(raw, `${tag}.style`, ctx.warnings);
         if (type === FRAME_TYPE) Object.assign(props, boxProps);
@@ -497,7 +599,7 @@ function buildElement(el: JSXElement, ctx: BuildCtx): NodeId {
     if (model && !desc && name !== model.slotProp) {
       ctx.warnings.push({ level: "warning", context: `${tag}.${name}`, message: `"${name}" is not a known prop of ${type} — kept as a raw value.` });
     }
-    const coerced = coerceValue(attrValue(attr), desc, `${tag}.${name}`, ctx.warnings);
+    const coerced = coerceValue(attrValue(attr, scope), desc, `${tag}.${name}`, ctx.warnings);
     if (coerced !== undefined) props[name] = coerced;
   }
 
@@ -508,10 +610,10 @@ function buildElement(el: JSXElement, ctx: BuildCtx): NodeId {
   const contentDesc = model?.props.find((p) => p.name === "children" && p.kind === "content");
 
   if (isSlot) {
-    node.children = appendChildren(el.children, ctx);
+    node.children = appendChildren(el.children, ctx, scope);
   } else if (contentDesc || textTag) {
     // Non-container with a `children` content prop → fold text into a literal.
-    const text = collectText(el, ctx, tag);
+    const text = collectText(el, ctx, tag, scope);
     if (text && props.children === undefined) props.children = { literalString: text };
   } else if (el.children.some(isElementChild)) {
     ctx.warnings.push({ level: "warning", context: tag, message: `<${tag}> is not a container — its child elements were dropped.` });
@@ -522,15 +624,15 @@ function buildElement(el: JSXElement, ctx: BuildCtx): NodeId {
 }
 
 /** Build child node ids for a slot container, turning loose text runs into Text nodes. */
-function appendChildren(children: JSXElement["children"], ctx: BuildCtx): NodeId[] {
+function appendChildren(children: JSXChild[], ctx: BuildCtx, scope: Scope): NodeId[] {
   const ids: NodeId[] = [];
   for (const child of children) {
     switch (child.type) {
       case "JSXElement":
-        ids.push(buildElement(child, ctx));
+        ids.push(buildElement(child, ctx, scope));
         break;
       case "JSXFragment":
-        ids.push(...appendChildren(child.children, ctx)); // inline fragments
+        ids.push(...appendChildren(child.children, ctx, scope)); // inline fragments
         break;
       case "JSXText": {
         const text = textOf(child.value);
@@ -539,10 +641,7 @@ function appendChildren(children: JSXElement["children"], ctx: BuildCtx): NodeId
       }
       case "JSXExpressionContainer": {
         if (child.expression.type === "JSXEmptyExpression") break;
-        const v = evalNode(child.expression as BabelNode);
-        if (typeof v === "string" && v.trim()) ids.push(makeText(ctx, v.trim()));
-        else if (v === UNSERIALIZABLE)
-          ctx.warnings.push({ level: "warning", message: `dynamic child {expression} could not be resolved — dropped.` });
+        ids.push(...buildChildExpression(child.expression as BabelNode, ctx, scope));
         break;
       }
       default:
@@ -552,15 +651,106 @@ function appendChildren(children: JSXElement["children"], ctx: BuildCtx): NodeId
   return ids;
 }
 
-/** Collect a non-container element's text children into one string. */
-function collectText(el: JSXElement, ctx: BuildCtx, tag: string): string {
+/**
+ * Resolve a `{ … }` child expression into nodes: `arr.map(...)` unrolls over a
+ * static array, `cond && <X/>` / `cond ? <A/> : <B/>` pick a branch, a bare
+ * `<X/>` builds directly, and a resolvable string becomes a Text node.
+ */
+function buildChildExpression(expr: BabelNode, ctx: BuildCtx, scope: Scope): NodeId[] {
+  switch (expr.type) {
+    case "JSXElement":
+      return [buildElement(expr, ctx, scope)];
+    case "JSXFragment":
+      return appendChildren(expr.children, ctx, scope);
+    case "ParenthesizedExpression":
+      return buildChildExpression(expr.expression as BabelNode, ctx, scope);
+    case "CallExpression": {
+      const ids = unrollMap(expr, ctx, scope);
+      if (ids) return ids;
+      ctx.warnings.push({
+        level: "warning",
+        message: `dynamic list could not be unrolled — its data is not statically present in the snippet; paste the data array alongside the markup, or fix it after import.`,
+      });
+      return [];
+    }
+    case "LogicalExpression": {
+      if (expr.operator === "&&") {
+        const left = evalNode(expr.left, scope);
+        if (left === UNSERIALIZABLE) {
+          ctx.warnings.push({ level: "warning", message: `conditional child {cond && …} could not be resolved — dropped.` });
+          return [];
+        }
+        return left ? buildChildExpression(expr.right as BabelNode, ctx, scope) : [];
+      }
+      break;
+    }
+    case "ConditionalExpression": {
+      const test = evalNode(expr.test, scope);
+      if (test === UNSERIALIZABLE) {
+        ctx.warnings.push({ level: "warning", message: `conditional child {a ? b : c} could not be resolved — dropped.` });
+        return [];
+      }
+      return buildChildExpression((test ? expr.consequent : expr.alternate) as BabelNode, ctx, scope);
+    }
+    default:
+      break;
+  }
+  const v = evalNode(expr, scope);
+  if (typeof v === "string" && v.trim()) return [makeText(ctx, v.trim())];
+  if (v === UNSERIALIZABLE) {
+    ctx.warnings.push({ level: "warning", message: `dynamic child {expression} could not be resolved — dropped.` });
+  }
+  return [];
+}
+
+/**
+ * Unroll `arr.map((item, i) => <JSX/>)` over a statically-known array into one
+ * node per element. Returns null when the call isn't a recognizable `.map` over a
+ * resolvable array (the caller then emits a warning).
+ */
+function unrollMap(call: CallExpression, ctx: BuildCtx, scope: Scope): NodeId[] | null {
+  const callee = call.callee;
+  if (callee.type !== "MemberExpression" && callee.type !== "OptionalMemberExpression") return null;
+  if (callee.computed || callee.property.type !== "Identifier" || callee.property.name !== "map") {
+    return null;
+  }
+  const arr = evalNode(callee.object as BabelNode, scope);
+  if (!Array.isArray(arr)) return null;
+
+  const cb = call.arguments[0];
+  if (!cb || (cb.type !== "ArrowFunctionExpression" && cb.type !== "FunctionExpression")) return null;
+  const p0 = cb.params[0];
+  const p1 = cb.params[1];
+  const itemName = p0 && p0.type === "Identifier" ? p0.name : null;
+  const idxName = p1 && p1.type === "Identifier" ? p1.name : null;
+
+  let tpl: BabelNode | null;
+  if (cb.body.type === "BlockStatement") {
+    const ret = cb.body.body.find((s) => s.type === "ReturnStatement");
+    tpl = ret && ret.argument ? ret.argument : null;
+  } else {
+    tpl = cb.body;
+  }
+  if (!tpl) return null;
+
+  const ids: NodeId[] = [];
+  arr.forEach((el, i) => {
+    const childScope: Scope = { ...scope };
+    if (itemName) childScope[itemName] = el;
+    if (idxName) childScope[idxName] = i;
+    ids.push(...buildChildExpression(tpl as BabelNode, ctx, childScope));
+  });
+  return ids;
+}
+
+function collectText(el: JSXElement, ctx: BuildCtx, tag: string, scope: Scope): string {
   const parts: string[] = [];
   for (const child of el.children) {
     if (child.type === "JSXText") {
       const t = textOf(child.value);
       if (t) parts.push(t);
     } else if (child.type === "JSXExpressionContainer" && child.expression.type !== "JSXEmptyExpression") {
-      const v = evalNode(child.expression as BabelNode);
+      const v = evalNode(child.expression as BabelNode, scope);
       if (typeof v === "string") parts.push(v);
       else if (v === UNSERIALIZABLE)
         ctx.warnings.push({ level: "warning", context: tag, message: `dynamic text {expression} could not be resolved — dropped.` });
@@ -571,40 +761,64 @@ function collectText(el: JSXElement, ctx: BuildCtx, tag: string): string {
   return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
-function describe(attr: JSXAttribute): string {
-  const v = attrValue(attr);
-  return typeof v === "string" ? v : "…";
-}
+// ── Parsing ───────────────────────────────────────────────────────────────────
 
-// ── Entry point ───────────────────────────────────────────────────────────────
-
-/** Parse a pasted snippet (possibly multiple roots) into a single JSX fragment. */
+/** Parse a bare expression snippet (one or many roots) into a JSX fragment. */
 function parseFragment(code: string): JSXFragment {
-  const trimmed = code.trim();
-  if (!trimmed) throw new ImportError("Nothing to import — the snippet is empty.");
   let expr: Expression;
   try {
-    expr = parseExpression(`<>${trimmed}</>`, {
-      plugins: ["jsx", "typescript"],
-      errorRecovery: false,
-    });
+    expr = parseExpression(`<>${code}</>`, { plugins: ["jsx", "typescript"], errorRecovery: false });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new ImportError(`Could not parse the pasted code as JSX: ${msg}`);
   }
-  if (expr.type !== "JSXFragment") {
-    throw new ImportError("The pasted code is not a JSX element.");
-  }
+  if (expr.type !== "JSXFragment") throw new ImportError("The pasted code is not a JSX element.");
   return expr;
 }
 
+/**
+ * Parse the input. Tries a full module parse first so top-level `const`
+ * declarations become a static scope and JSX statements become roots; falls back
+ * to a bare-expression fragment parse for snippets that aren't a valid module.
+ */
+function parseInput(code: string): { scope: Scope; roots: JSXChild[] } {
+  const trimmed = code.trim();
+  if (!trimmed) throw new ImportError("Nothing to import — the snippet is empty.");
+
+  try {
+    const file = parse(trimmed, { sourceType: "module", plugins: ["jsx", "typescript"] });
+    const scope: Scope = {};
+    const roots: JSXChild[] = [];
+    for (const stmt of file.program.body) {
+      if (stmt.type === "VariableDeclaration") {
+        for (const d of stmt.declarations) {
+          if (d.id.type === "Identifier" && d.init) {
+            const v = evalNode(d.init as BabelNode, scope);
+            if (v !== UNSERIALIZABLE) scope[d.id.name] = v;
+          }
+        }
+      } else if (stmt.type === "ExpressionStatement") {
+        const ex = stmt.expression;
+        if (ex.type === "JSXElement" || ex.type === "JSXFragment") roots.push(ex);
+      }
+    }
+    if (roots.length > 0) return { scope, roots };
+  } catch {
+    // Not a valid module — fall through to the fragment parser below.
+  }
+
+  return { scope: {}, roots: parseFragment(trimmed).children };
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
 export function importCode(code: string, catalog: CatalogModel): ImportResult {
-  const fragment = parseFragment(code);
+  const { scope, roots } = parseInput(code);
   const ctx: BuildCtx = { catalog, nodes: {}, warnings: [] };
 
   const root = makeBox(ctx);
   ctx.nodes[root.id] = root;
-  root.children = appendChildren(fragment.children, ctx);
+  root.children = appendChildren(roots, ctx, scope);
 
   if (root.children.length === 0) {
     throw new ImportError("No renderable elements were found in the pasted code.");
