@@ -16,17 +16,20 @@ import {
   List,
   MessageCircle,
   MousePointerClick,
+  PanelTop,
   Square,
   Tag,
   Type,
 } from "lucide-react";
 import type { NodeId } from "@pds/a2ui-schema";
+import { SLOT_TYPE } from "@pds/a2ui-schema";
 import { useActiveSurface, useComposer } from "../store";
 
 // ── icon map ────────────────────────────────────────────────────────────────
 
 function iconFor(type: string) {
   switch (type) {
+    case SLOT_TYPE:            return PanelTop;
     case "Frame":              return Layers;
     case "Button":             return MousePointerClick;
     case "ButtonGroup":        return LayoutList;
@@ -59,11 +62,13 @@ interface RowProps {
   hasChildren: boolean;
   expanded: boolean;
   type: string;
+  label: string;
+  isSlot: boolean;
   onSelect: () => void;
   onToggle: () => void;
 }
 
-function TreeRow({ nodeId, depth, isSelected, hasChildren, expanded, type, onSelect, onToggle }: RowProps) {
+function TreeRow({ nodeId, depth, isSelected, hasChildren, expanded, type, label, isSlot, onSelect, onToggle }: RowProps) {
   const Icon = iconFor(type);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -99,8 +104,13 @@ function TreeRow({ nodeId, depth, isSelected, hasChildren, expanded, type, onSel
         className={`shrink-0 ${isSelected ? "text-chrome-accent" : "text-chrome-muted group-hover:text-chrome-text"}`}
       />
 
-      {/* node type label */}
-      <span className="truncate font-medium">{type}</span>
+      {/* node label (slot name for slot wrappers, else the component type) */}
+      <span className="truncate font-medium">{label}</span>
+      {isSlot && (
+        <span className="shrink-0 rounded bg-chrome-accent/15 px-1 text-[8px] uppercase tracking-wide text-chrome-accent">
+          slot
+        </span>
+      )}
 
       {/* faint id */}
       <span className="ml-auto shrink-0 font-mono text-[9px] opacity-40">{nodeId.slice(0, 6)}</span>
@@ -121,7 +131,7 @@ function TreeNodes({
 }: {
   nodeId: NodeId;
   depth: number;
-  nodes: Record<NodeId, { type: string; children?: NodeId[] }>;
+  nodes: Record<NodeId, { type: string; children?: NodeId[]; editorMeta?: { slotOf?: string } }>;
   selectedId: NodeId | undefined;
   expanded: Set<NodeId>;
   onSelect: (id: NodeId) => void;
@@ -131,6 +141,8 @@ function TreeNodes({
   if (!node) return null;
   const hasChildren = !!(node.children?.length);
   const isExpanded = expanded.has(nodeId);
+  const slotOf = node.editorMeta?.slotOf;
+  const isSlot = node.type === SLOT_TYPE;
 
   return (
     <>
@@ -141,6 +153,8 @@ function TreeNodes({
         hasChildren={hasChildren}
         expanded={isExpanded}
         type={node.type}
+        label={slotOf ?? node.type}
+        isSlot={isSlot}
         onSelect={() => onSelect(nodeId)}
         onToggle={() => onToggle(nodeId)}
       />

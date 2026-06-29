@@ -16,7 +16,7 @@ import type {
   ItemVariant,
   PropDescriptor,
 } from "./catalog.types";
-import { frameComponentModel, FRAME_TYPE } from "./frame";
+import { frameComponentModel, slotComponentModel, FRAME_TYPE, SLOT_TYPE } from "./frame";
 
 interface RawSchema {
   type?: string;
@@ -43,7 +43,18 @@ interface RawCatalog {
 }
 
 /** Allowlist fallback used when the catalog lacks `x-a2ui-slot` (ARCHITECTURE §5.3). */
-const SLOT_ALLOWLIST = new Set([FRAME_TYPE, "TileContainer"]);
+const SLOT_ALLOWLIST = new Set([FRAME_TYPE, "TileContainer", "ComposableTileContainer"]);
+
+/**
+ * Components whose object props carry a nested content slot (a child subtree) the
+ * catalog can't mark, keyed component → set of object-prop names. The slot lives in
+ * the object's `children` field. On import these are exploded into `Slot` nodes so
+ * the content is editable on the canvas (ARCHITECTURE §13.2, allowlist precedent).
+ */
+const OBJECT_SLOT_PROPS: Record<string, Set<string>> = {
+  ComposableTileContainer: new Set(["cap", "header", "footer"]),
+};
+const OBJECT_SLOT_FIELD = "children";
 
 /** Curated palette grouping — the catalog carries no group metadata. */
 const GROUPS: Record<string, string> = {
@@ -58,6 +69,7 @@ const GROUPS: Record<string, string> = {
   BadgeIndicator: "Content",
   ScreenReaderText: "Content",
   TileContainer: "Containers",
+  ComposableTileContainer: "Containers",
   Tilelet: "Containers",
   Accordion: "Containers",
   AccordionItem: "Containers",
@@ -316,7 +328,17 @@ function deriveComponent(
       0,
       name,
     );
-    if (desc) props.push(desc);
+    if (!desc) continue;
+
+    // Tag object props that carry a nested content slot. The slot field itself is
+    // dropped from the inspector fields — its content is edited on the canvas via
+    // the exploded Slot node (see import-code/transform).
+    if (desc.kind === "object" && OBJECT_SLOT_PROPS[name]?.has(propName)) {
+      desc.objectSlot = true;
+      desc.slotField = OBJECT_SLOT_FIELD;
+      desc.fields = desc.fields?.filter((f) => f.name !== OBJECT_SLOT_FIELD);
+    }
+    props.push(desc);
   }
 
   return {
@@ -341,6 +363,10 @@ export function loadCatalog(json: unknown): CatalogModel {
 
   // Inject the synthetic Frame layout primitive (ARCHITECTURE §13.1).
   components[FRAME_TYPE] = frameComponentModel;
+  // Inject the synthetic Slot wrapper (object-prop slot content). Kept out of
+  // `order`/`groups` below so it never appears in the palette — Slots are only
+  // created by import/transform, never added by hand.
+  components[SLOT_TYPE] = slotComponentModel;
 
   // Warn loudly if no slot was marked — we fell back to the allowlist.
   const hasMarkedSlot = Object.values(raw.components).some((c) =>
@@ -352,7 +378,7 @@ export function loadCatalog(json: unknown): CatalogModel {
     );
   }
 
-  const order = Object.keys(components);
+  const order = Object.keys(components).filter((n) => n !== SLOT_TYPE);
   const groups: Record<string, string[]> = {};
   for (const name of order) {
     const g = components[name].group;

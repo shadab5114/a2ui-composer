@@ -14,10 +14,12 @@ export { getCatalog, buildValidators, rawCatalog, ICON_NAMES } from "./zod-sourc
 export type { Validators } from "./zod-source";
 export {
   FRAME_TYPE,
+  SLOT_TYPE,
   A2UI_COLUMN,
   A2UI_ROW,
   SPACE_TOKENS,
   frameComponentModel,
+  slotComponentModel,
   frameDefaultProps,
   isA2UILayout,
 } from "./frame";

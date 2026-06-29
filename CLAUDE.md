@@ -10,7 +10,7 @@ Tooling is Bun: `bun install`, `bun add`, `bun run <script>`, `bunx <tool>`,
 
 The design system + tokens live on **GitHub Packages**, not public npm:
 
-- `@shadab5114/pds-core@1.0.0-alpha.3` — real React components + `catalog.json`
+- `@shadab5114/pds-core@1.0.0-alpha.4` — real React components + `catalog.json`
 - `@shadab5114/pdesign-tokens@1.0.0-alpha.2` — CSS-variable design tokens
 
 `.npmrc` points the `@shadab5114` scope at `https://npm.pkg.github.com` and reads

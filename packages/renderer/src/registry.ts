@@ -23,6 +23,7 @@ import {
   TextLink,
   TextLinkCaret,
   TileContainer,
+  ComposableTileContainer,
   Tilelet,
   TitleLockup,
   TitleLockupEyebrow,
@@ -31,8 +32,9 @@ import {
   Tooltip,
 } from "@shadab5114/pds-core";
 import * as PdsIcons from "@shadab5114/pds-core/icons";
-import { FRAME_TYPE } from "@pds/a2ui-schema";
+import { FRAME_TYPE, SLOT_TYPE } from "@pds/a2ui-schema";
 import { Box } from "./standins/Box";
+import { SlotBox } from "./standins/SlotBox";
 
 type IconFC = ComponentType<{ size?: string | number; color?: string }>;
 const iconMap = PdsIcons as unknown as Record<string, IconFC>;
@@ -64,6 +66,7 @@ export type AnyComponent = ComponentType<any>;
 
 export const registry: Record<string, AnyComponent> = {
   [FRAME_TYPE]: Box,
+  [SLOT_TYPE]: SlotBox,
   Button,
   TextLink,
   TextLinkCaret,
@@ -77,6 +80,7 @@ export const registry: Record<string, AnyComponent> = {
   BadgeIndicator,
   Image,
   TileContainer,
+  ComposableTileContainer,
   Tilelet,
   TitleLockup,
   TitleLockupTitle,

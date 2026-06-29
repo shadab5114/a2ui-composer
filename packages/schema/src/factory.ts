@@ -5,9 +5,27 @@
 import { nanoid } from "nanoid";
 import type { CatalogModel, ComponentModel, PropDescriptor } from "./catalog.types";
 import type { DocNode, Surface } from "./doc.types";
-import { FRAME_TYPE } from "./frame";
+import { FRAME_TYPE, SLOT_TYPE } from "./frame";
 
 export const newId = (): string => nanoid(8);
+
+/**
+ * Empty `Slot` nodes for each object-slot prop a component declares (cap/header/
+ * footer on ComposableTileContainer). Materialising these up-front means the canvas
+ * always shows the named slot zones as droppable targets — the editor's signal that
+ * the component accepts children in those regions. Empty zones are editor-only
+ * scaffolding: the exporter drops a slot that has no children and no props.
+ */
+export function emptySlotNodesFor(model: ComponentModel | undefined): DocNode[] {
+  if (!model) return [];
+  const out: DocNode[] = [];
+  for (const p of model.props) {
+    if (p.objectSlot) {
+      out.push({ id: newId(), type: SLOT_TYPE, props: {}, children: [], editorMeta: { slotOf: p.name } });
+    }
+  }
+  return out;
+}
 
 // Inline SVG data-URI used for placeholder images so no network is required.
 const PLACEHOLDER_IMG =

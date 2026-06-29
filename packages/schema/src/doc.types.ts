@@ -16,6 +16,12 @@ export interface DocNode {
   editorMeta?: {
     locked?: boolean;
     collapsed?: boolean;
+    /**
+     * Set on synthetic `Slot` nodes: the name of the object-valued prop on the
+     * parent this node's content fills (e.g. "header"). Drives slot reconstruction
+     * in the renderer and collapse-on-export in the transform.
+     */
+    slotOf?: string;
   };
 }
 

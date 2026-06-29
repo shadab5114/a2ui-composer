@@ -11,6 +11,15 @@ import type { ComponentModel, PropDescriptor } from "./catalog.types";
 
 export const FRAME_TYPE = "Box";
 
+/**
+ * Synthetic editor-only node that holds the content of an object-valued slot prop
+ * (e.g. `ComposableTileContainer.header.children`). It lives in its parent's
+ * `children` array, tagged via `editorMeta.slotOf` with the prop it fills, so the
+ * canvas/inspector/dnd treat it like any other slot container. It is never emitted
+ * to A2UI — the exporter collapses it back into the parent's object prop.
+ */
+export const SLOT_TYPE = "Slot";
+
 /** A2UI component names a Box serializes to. */
 export const A2UI_COLUMN = "Column";
 export const A2UI_ROW = "Row";
@@ -151,6 +160,22 @@ export function frameDefaultProps(): Record<string, unknown> {
   for (const p of boxProps) if (p.default !== undefined) out[p.name] = p.default;
   return out;
 }
+
+/**
+ * Synthetic catalog entry for the `Slot` wrapper. Marked a slot container so the
+ * canvas, dnd, and store treat its children as droppable/editable. Its own editable
+ * props (padding, backgroundColor, …) are derived per-instance from the parent
+ * component's object-prop descriptor, so the static `props` list is empty.
+ */
+export const slotComponentModel: ComponentModel = {
+  name: SLOT_TYPE,
+  group: "Layout",
+  description: "Editable content of an object-valued slot prop (e.g. header, cap).",
+  props: [],
+  slotProp: "children",
+  isSlotContainer: true,
+  synthetic: true,
+};
 
 /**
  * True if an A2UI component name is a layout primitive that imports back to Box.

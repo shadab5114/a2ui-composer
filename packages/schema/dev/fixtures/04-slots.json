@@ -1,0 +1,47 @@
+{
+  "a2ui": [
+    {
+      "version": "v0.9",
+      "createSurface": {
+        "surfaceId": "screen-slots",
+        "catalogId": "https://pdesign.dev/catalog/v1/catalog.json"
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateComponents": {
+        "surfaceId": "screen-slots",
+        "components": [
+          {
+            "id": "tile",
+            "component": "ComposableTileContainer",
+            "surface": "lightPrimary",
+            "padding": "4X",
+            "background": "white",
+            "header": {
+              "padding": "4X",
+              "backgroundColor": "white",
+              "children": ["hdrText"]
+            },
+            "children": ["bodyText"]
+          },
+          {
+            "id": "hdrText",
+            "component": "Text",
+            "kind": "body",
+            "size": "small",
+            "bold": true,
+            "children": { "literalString": "Best value" }
+          },
+          {
+            "id": "bodyText",
+            "component": "Text",
+            "kind": "body",
+            "size": "medium",
+            "children": { "literalString": "1 Gig plan" }
+          }
+        ]
+      }
+    }
+  ]
+}

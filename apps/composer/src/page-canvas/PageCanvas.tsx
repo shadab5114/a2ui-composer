@@ -12,6 +12,7 @@ import type { DocNode, NodeId } from "@pds/a2ui-schema";
 import { useActiveSurface, useComposer } from "../store";
 import { EditorNode } from "./EditorNode";
 import { InsertZone } from "./InsertZone";
+import { BodyDropZone } from "./BodyDropZone";
 
 const PRESETS = [
   { label: "Mobile", w: 390, h: 844 },
@@ -35,6 +36,11 @@ export function PageCanvas() {
         <InsertZone key={`iz:${parentId}:${index}`} parentId={parentId} index={index} direction={direction} />
       )
     : undefined;
+  // Persistent body affordance — always rendered (not gated on a drag) so containers
+  // visibly advertise that they accept children.
+  const bodyZone = (node: DocNode, index: number, direction: string): ReactNode => (
+    <BodyDropZone key={`bz:${node.id}`} parentId={node.id} index={index} direction={direction} />
+  );
 
   const [preset, setPreset] = useState<Preset>("Mobile");
   const [frameW, setFrameW] = useState(390);
@@ -147,7 +153,7 @@ export function PageCanvas() {
             >
               {/* flex:1 wrapper lets the root EditorNode (also flex:1) fill the frame */}
               <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "auto" }}>
-                <A2UISurface surface={surface} wrapNode={wrapNode} insertZone={insertZone} />
+                <A2UISurface surface={surface} wrapNode={wrapNode} insertZone={insertZone} bodyZone={bodyZone} />
               </div>
             </div>
           </div>

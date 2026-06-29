@@ -9,7 +9,7 @@ import { type ReactNode, useCallback } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { ArrowUpToLine, ChevronDown, ChevronUp, GripVertical, Trash2 } from "lucide-react";
 import type { DocNode } from "@pds/a2ui-schema";
-import { FRAME_TYPE } from "@pds/a2ui-schema";
+import { FRAME_TYPE, SLOT_TYPE } from "@pds/a2ui-schema";
 import { catalog, useComposer } from "../store";
 
 function mergeRefs<T>(...refs: Array<(node: T | null) => void>) {
@@ -20,6 +20,9 @@ function mergeRefs<T>(...refs: Array<(node: T | null) => void>) {
 
 export function EditorNode({ node, children }: { node: DocNode; children: ReactNode }) {
   const isSlot = catalog.components[node.type]?.isSlotContainer ?? false;
+  // A synthetic Slot wrapper (header/cap/…) is bound to its parent's object prop:
+  // it can hold/reorder children, but must not itself be dragged out or deleted.
+  const isSlotNode = !!node.editorMeta?.slotOf;
   const selected = useComposer((s) => s.selection?.nodeId === node.id);
   const isRoot = useComposer((s) => s.doc.surfaces[s.activeSurfaceId]?.root === node.id);
   const setSelection = useComposer((s) => s.setSelection);
@@ -31,13 +34,14 @@ export function EditorNode({ node, children }: { node: DocNode; children: ReactN
   const draggable = useDraggable({
     id: node.id,
     data: { source: "node", nodeId: node.id },
-    disabled: isRoot,
+    disabled: isRoot || isSlotNode,
   });
   // Box nodes with existing children delegate all drops to their InsertZones
   // (rendered by the Renderer between each sibling pair). Disabling the slot
   // droppable prevents a large child Box from winning the dnd-kit collision test
   // and swallowing drops that the user intended for the parent Box.
-  const boxHasChildren = node.type === FRAME_TYPE && !!node.children?.length;
+  const boxHasChildren =
+    (node.type === FRAME_TYPE || node.type === SLOT_TYPE) && !!node.children?.length;
   const droppable = useDroppable({
     id: `slot:${node.id}`,
     data: { source: "slot", nodeId: node.id },
@@ -72,7 +76,7 @@ export function EditorNode({ node, children }: { node: DocNode; children: ReactN
         // Root fills its flex parent (the screen frame wrapper).
         ...(isRoot
           ? { flex: 1, display: "flex", flexDirection: "column" }
-          : { minHeight: isEmpty ? 80 : undefined }),
+          : { minHeight: isEmpty ? (isSlotNode ? 48 : 80) : undefined }),
       }}
     >
       {selected && (
@@ -81,7 +85,9 @@ export function EditorNode({ node, children }: { node: DocNode; children: ReactN
           className="flex items-center gap-0.5 rounded bg-chrome-panel px-1 py-0.5 shadow"
           onClick={(e) => e.stopPropagation()}
         >
-          <span className="px-1 text-[10px] text-chrome-muted">{node.type}</span>
+          <span className="px-1 text-[10px] text-chrome-muted">
+            {node.editorMeta?.slotOf ? `${node.editorMeta.slotOf} slot` : node.type}
+          </span>
           {!isRoot && (
             <button
               onClick={() => selectParent(node.id)}
@@ -91,7 +97,7 @@ export function EditorNode({ node, children }: { node: DocNode; children: ReactN
               <ArrowUpToLine size={12} />
             </button>
           )}
-          {!isRoot && (
+          {!isRoot && !isSlotNode && (
             <button
               ref={draggable.setActivatorNodeRef}
               {...draggable.listeners}
@@ -102,21 +108,25 @@ export function EditorNode({ node, children }: { node: DocNode; children: ReactN
               <GripVertical size={12} />
             </button>
           )}
-          <button
-            onClick={() => moveNode(node.id, "up")}
-            className="rounded p-0.5 text-chrome-text hover:bg-chrome-border"
-            title="Move up"
-          >
-            <ChevronUp size={12} />
-          </button>
-          <button
-            onClick={() => moveNode(node.id, "down")}
-            className="rounded p-0.5 text-chrome-text hover:bg-chrome-border"
-            title="Move down"
-          >
-            <ChevronDown size={12} />
-          </button>
-          {!isRoot && (
+          {!isSlotNode && (
+            <>
+              <button
+                onClick={() => moveNode(node.id, "up")}
+                className="rounded p-0.5 text-chrome-text hover:bg-chrome-border"
+                title="Move up"
+              >
+                <ChevronUp size={12} />
+              </button>
+              <button
+                onClick={() => moveNode(node.id, "down")}
+                className="rounded p-0.5 text-chrome-text hover:bg-chrome-border"
+                title="Move down"
+              >
+                <ChevronDown size={12} />
+              </button>
+            </>
+          )}
+          {!isRoot && !isSlotNode && (
             <button
               onClick={() => removeNode(node.id)}
               className="rounded p-0.5 text-red-400 hover:bg-chrome-border"
@@ -148,7 +158,7 @@ export function EditorNode({ node, children }: { node: DocNode; children: ReactN
           }}
         >
           <span style={{ fontSize: 14 }}>+</span>
-          {node.type} · drop here
+          {node.editorMeta?.slotOf ? `${node.editorMeta.slotOf} slot` : node.type} · drop here
         </div>
       )}
     </div>

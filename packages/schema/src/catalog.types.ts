@@ -27,6 +27,15 @@ export interface PropDescriptor {
   itemDiscriminator?: string;
   /** true for the slot children property (the only droppable prop) */
   slot?: boolean;
+  /**
+   * object kind: this object prop carries a nested slot (a child subtree) in one of
+   * its fields, e.g. `ComposableTileContainer.header.children`. On import such a
+   * prop is "exploded" into a synthetic `Slot` node so its content is editable on
+   * the canvas; on export it is collapsed back into the object prop.
+   */
+  objectSlot?: boolean;
+  /** object kind: name of the slot-bearing field inside the object (usually "children"). */
+  slotField?: string;
   /** when true, the inspector renders an icon picker modal instead of a plain dropdown */
   isIconPicker?: boolean;
 }

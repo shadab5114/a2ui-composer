@@ -11,6 +11,7 @@ import { temporal } from "zundo";
 import {
   createNode,
   createSurface,
+  emptySlotNodesFor,
   getCatalog,
   newId,
   type EditorDocument,
@@ -143,9 +144,16 @@ export const useComposer = create<ComposerState>()(
         if (!isSlotContainer(surface.nodes[target]?.type)) target = surface.root;
 
         const node = createNode(catalog, type);
+        // Materialise the component's named slot zones (cap/header/footer) so they
+        // appear on the canvas as droppable targets immediately.
+        const slotNodes = emptySlotNodesFor(catalog.components[type]);
+        if (slotNodes.length) {
+          node.children = [...slotNodes.map((s) => s.id), ...(node.children ?? [])];
+        }
         set((s) => {
           const surf = s.doc.surfaces[s.activeSurfaceId];
           surf.nodes[node.id] = node;
+          for (const sl of slotNodes) surf.nodes[sl.id] = sl;
           const parent = surf.nodes[target!];
           parent.children ??= [];
           const at = index ?? parent.children.length;

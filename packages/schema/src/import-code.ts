@@ -38,7 +38,7 @@ import type {
 import type { CatalogModel, ComponentModel, PropDescriptor } from "./catalog.types";
 import type { DocNode, NodeId, Surface } from "./doc.types";
 import { createNode, newId } from "./factory";
-import { FRAME_TYPE } from "./frame";
+import { FRAME_TYPE, SLOT_TYPE } from "./frame";
 
 export interface ImportIssue {
   level: "warning" | "error";
@@ -540,6 +540,76 @@ function makeText(ctx: BuildCtx, text: string): NodeId {
   return id;
 }
 
+/** Unwrap parentheses to reach the underlying expression. */
+function unwrapParens(node: BabelNode): BabelNode {
+  let n = node;
+  while (n.type === "ParenthesizedExpression") n = n.expression as BabelNode;
+  return n;
+}
+
+/**
+ * Explode an object-valued slot prop (e.g. `header={{ padding, children: <JSX/> }}`)
+ * into a synthetic `Slot` node: its scalar fields become the node's props and its
+ * `children` JSX becomes the node's editable child subtree. Returns the Slot id.
+ */
+function buildObjectSlot(
+  obj: ObjectExpression,
+  propName: string,
+  desc: PropDescriptor,
+  ctx: BuildCtx,
+  scope: Scope,
+): NodeId {
+  const slotField = desc.slotField ?? "children";
+  const props: Record<string, unknown> = {};
+  let childIds: NodeId[] = [];
+
+  for (const prop of obj.properties) {
+    if (prop.type === "SpreadElement") {
+      const spread = evalNode(prop.argument as BabelNode, scope);
+      if (isPlainObject(spread)) Object.assign(props, spread);
+      else
+        ctx.warnings.push({
+          level: "warning",
+          context: propName,
+          message: `spread inside ${propName}{} could not be resolved statically — dropped.`,
+        });
+      continue;
+    }
+    if (prop.type !== "ObjectProperty" || prop.computed) continue;
+    const key =
+      prop.key.type === "Identifier"
+        ? prop.key.name
+        : prop.key.type === "StringLiteral"
+          ? prop.key.value
+          : null;
+    if (key === null) continue;
+
+    if (key === slotField) {
+      childIds = buildChildExpression(prop.value as BabelNode, ctx, scope);
+    } else {
+      const field = desc.fields?.find((f) => f.name === key);
+      const coerced = coerceValue(
+        evalNode(prop.value as BabelNode, scope),
+        field,
+        `${propName}.${key}`,
+        ctx.warnings,
+      );
+      if (coerced !== undefined) props[key] = coerced;
+    }
+  }
+
+  const id = newId();
+  const node: DocNode = {
+    id,
+    type: SLOT_TYPE,
+    props,
+    children: childIds,
+    editorMeta: { slotOf: propName },
+  };
+  ctx.nodes[id] = node;
+  return id;
+}
+
 function buildElement(el: JSXElement, ctx: BuildCtx, scope: Scope): NodeId {
   const tag = jsxName(el.openingElement.name);
   const { type, seedProps, textTag, aliasedFrom } = resolveTag(tag, ctx.catalog);
@@ -560,6 +630,9 @@ function buildElement(el: JSXElement, ctx: BuildCtx, scope: Scope): NodeId {
   }
 
   const props: Record<string, unknown> = { ...seedProps };
+  // Object-slot props (e.g. header/cap) are exploded into Slot child nodes; their
+  // ids are collected here and prepended to this node's children below.
+  const slotChildIds: NodeId[] = [];
 
   for (const attr of el.openingElement.attributes) {
     if (attr.type === "JSXSpreadAttribute") {
@@ -596,6 +669,26 @@ function buildElement(el: JSXElement, ctx: BuildCtx, scope: Scope): NodeId {
     }
 
     const desc = model?.props.find((p) => p.name === name);
+
+    // Object-slot prop (header/cap/…): explode its `children` JSX into a Slot node
+    // instead of trying to statically serialize the subtree.
+    if (desc?.objectSlot) {
+      const expr =
+        attr.value?.type === "JSXExpressionContainer"
+          ? unwrapParens(attr.value.expression as BabelNode)
+          : null;
+      if (expr && expr.type === "ObjectExpression") {
+        slotChildIds.push(buildObjectSlot(expr, name, desc, ctx, scope));
+      } else {
+        ctx.warnings.push({
+          level: "warning",
+          context: `${tag}.${name}`,
+          message: `${name} is a slot prop but was not an object literal — dropped.`,
+        });
+      }
+      continue;
+    }
+
     if (model && !desc && name !== model.slotProp) {
       ctx.warnings.push({ level: "warning", context: `${tag}.${name}`, message: `"${name}" is not a known prop of ${type} — kept as a raw value.` });
     }
@@ -606,15 +699,40 @@ function buildElement(el: JSXElement, ctx: BuildCtx, scope: Scope): NodeId {
   const id = newId();
   const node: DocNode = { id, type, props };
 
+  // Materialise declared object-slots absent from the source (e.g. an imported tile
+  // that only set `header`) so every named slot zone shows as a droppable target.
+  if (model) {
+    const present = new Set(
+      slotChildIds.map((sid) => ctx.nodes[sid]?.editorMeta?.slotOf),
+    );
+    for (const p of model.props) {
+      if (p.objectSlot && !present.has(p.name)) {
+        const sid = newId();
+        ctx.nodes[sid] = {
+          id: sid,
+          type: SLOT_TYPE,
+          props: {},
+          children: [],
+          editorMeta: { slotOf: p.name },
+        };
+        slotChildIds.push(sid);
+      }
+    }
+  }
+
   const isSlot = model?.isSlotContainer ?? type === FRAME_TYPE;
   const contentDesc = model?.props.find((p) => p.name === "children" && p.kind === "content");
 
   if (isSlot) {
-    node.children = appendChildren(el.children, ctx, scope);
+    // Slot children (header/cap/…) come first, then the default body content.
+    node.children = [...slotChildIds, ...appendChildren(el.children, ctx, scope)];
   } else if (contentDesc || textTag) {
     // Non-container with a `children` content prop → fold text into a literal.
     const text = collectText(el, ctx, tag, scope);
     if (text && props.children === undefined) props.children = { literalString: text };
+    if (slotChildIds.length) node.children = slotChildIds;
+  } else if (slotChildIds.length) {
+    node.children = slotChildIds;
   } else if (el.children.some(isElementChild)) {
     ctx.warnings.push({ level: "warning", context: tag, message: `<${tag}> is not a container — its child elements were dropped.` });
   }

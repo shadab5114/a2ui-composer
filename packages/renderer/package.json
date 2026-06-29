@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@pds/a2ui-schema": "workspace:*",
-    "@shadab5114/pds-core": "1.0.0-alpha.3",
+    "@shadab5114/pds-core": "1.0.0-alpha.4",
     "@shadab5114/pdesign-tokens": "1.0.0-alpha.2"
   },
   "peerDependencies": {

@@ -14,7 +14,7 @@
  */
 import React, { type CSSProperties, type ReactNode } from "react";
 import type { DocNode, NodeId, Surface } from "@pds/a2ui-schema";
-import { FRAME_TYPE } from "@pds/a2ui-schema";
+import { FRAME_TYPE, SLOT_TYPE } from "@pds/a2ui-schema";
 import { getComponent } from "./registry";
 import { resolveProps, type DataModel } from "./dynamic";
 import { Fallback } from "./standins/Fallback";
@@ -29,6 +29,12 @@ export interface RenderOptions {
    * When undefined (sandbox), no zones are rendered.
    */
   insertZone?: (parentId: NodeId, index: number, direction: string) => ReactNode;
+  /**
+   * Editor-only: return a persistent "drop content here" affordance appended to the
+   * end of a slot container's body, so it always advertises that it takes children.
+   * When undefined (sandbox), nothing is rendered.
+   */
+  bodyZone?: (node: DocNode, index: number, direction: string) => ReactNode;
 }
 
 /**
@@ -86,8 +92,27 @@ export function renderNode(
   if (!Comp) {
     element = <Fallback type={node.type} />;
   } else if (node.children) {
-    const isBox = node.type === FRAME_TYPE;
+    // A Box or a Slot lays out its own children (insert zones, per-child flex).
+    const isBox = node.type === FRAME_TYPE || node.type === SLOT_TYPE;
     const parentDir = (node.props.direction as string | undefined) ?? "vertical";
+
+    // Split children into object-slot wrappers (header/cap/…) and ordinary body
+    // children, keeping each body child's real index in `node.children` so insert
+    // zones address the same array the store splices into. Slot wrappers are
+    // reconstituted into object props on `resolved`; only body children render as
+    // this component's JSX children.
+    const bodyEntries: Array<{ id: NodeId; idx: number }> = [];
+    for (let i = 0; i < node.children.length; i++) {
+      const childId: NodeId = node.children[i];
+      const slotOf = nodes[childId]?.editorMeta?.slotOf;
+      if (slotOf) {
+        const slotNode = nodes[childId];
+        const { resolved: scalars } = resolveProps(slotNode.props, options.dataModel);
+        resolved[slotOf] = { ...scalars, children: renderNode(childId, nodes, options) };
+      } else {
+        bodyEntries.push({ id: childId, idx: i });
+      }
+    }
 
     const wrappedChild = (childId: NodeId) => {
       const childEl = renderNode(childId, nodes, options);
@@ -103,16 +128,22 @@ export function renderNode(
     let kids: ReactNode[];
     if (isBox && options.insertZone) {
       // Interleave insert zones so the user can drag-to-position between siblings.
+      // Indices are in full-`children` space (past any leading slot wrappers).
       const iz = options.insertZone;
       kids = [];
-      for (let i = 0; i < node.children.length; i++) {
-        kids.push(iz(node.id, i, parentDir));
-        kids.push(wrappedChild(node.children[i]));
+      for (const { id, idx } of bodyEntries) {
+        kids.push(iz(node.id, idx, parentDir));
+        kids.push(wrappedChild(id));
       }
-      // Trailing zone (after last child, or the only zone in an empty container).
-      kids.push(iz(node.id, node.children.length, parentDir));
     } else {
-      kids = node.children.map(wrappedChild);
+      kids = bodyEntries.map((e) => wrappedChild(e.id));
+    }
+
+    // Persistent body drop zone: every container that already has children keeps an
+    // always-visible "drop here" target at the end of its body. (Empty containers
+    // get the full-size empty-slot placeholder from the editor wrapper instead.)
+    if (options.bodyZone && node.children.length > 0) {
+      kids.push(options.bodyZone(node, node.children.length, parentDir));
     }
 
     element = <Comp {...resolved}>{kids}</Comp>;
@@ -131,16 +162,18 @@ export interface A2UISurfaceProps {
   dataModel?: DataModel;
   wrapNode?: RenderOptions["wrapNode"];
   insertZone?: RenderOptions["insertZone"];
+  bodyZone?: RenderOptions["bodyZone"];
 }
 
 /** Render a whole surface. Used by BOTH the composer preview and the sandbox. */
-export function A2UISurface({ surface, dataModel, wrapNode, insertZone }: A2UISurfaceProps) {
+export function A2UISurface({ surface, dataModel, wrapNode, insertZone, bodyZone }: A2UISurfaceProps) {
   return (
     <>
       {renderNode(surface.root, surface.nodes, {
         dataModel: dataModel ?? surface.dataModel,
         wrapNode,
         insertZone,
+        bodyZone,
       })}
     </>
   );

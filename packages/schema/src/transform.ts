@@ -18,7 +18,8 @@ import type {
 } from "./a2ui.types";
 import { isDynamicString } from "./a2ui.types";
 import type { DocNode, NodeId, Surface } from "./doc.types";
-import { isA2UILayout, FRAME_TYPE } from "./frame";
+import { isA2UILayout, FRAME_TYPE, SLOT_TYPE } from "./frame";
+import { newId } from "./factory";
 
 // ── Data-model helpers ────────────────────────────────────────────────────────
 
@@ -67,6 +68,18 @@ function objectToPaths(
 
 // ── Prop helpers ──────────────────────────────────────────────────────────────
 
+/**
+ * True if a prop value is an exported object-slot: a plain object whose `children`
+ * is an array of id-ref strings (e.g. `header = { padding, children: ["c1"] }`).
+ * This is exactly the shape `exportSurface` emits when collapsing a Slot node, and
+ * is distinguishable from a content object (whose `children` is a DynamicString).
+ */
+function isObjectSlotValue(value: unknown): boolean {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
+  const children = (value as Record<string, unknown>).children;
+  return Array.isArray(children) && children.every((c) => typeof c === "string");
+}
+
 function collectPaths(value: unknown, into: Set<string>): void {
   if (value == null || typeof value !== "object") return;
   if (isDynamicString(value)) {
@@ -95,6 +108,14 @@ export function exportSurface(surface: Surface, catalogId: string): A2UIExport {
     const node = surface.nodes[id];
     if (!node) return;
 
+    // Slot wrappers are editor-only: they never emit a component. Their content is
+    // folded into the parent's object prop (below); here we only descend so the
+    // slot's child components are still emitted into the adjacency list.
+    if (node.type === SLOT_TYPE) {
+      if (node.children) for (const childId of node.children) visit(childId);
+      return;
+    }
+
     // Box always exports as "Box" with an explicit direction prop.
     const component = node.type === FRAME_TYPE ? FRAME_TYPE : node.type;
     const out: A2UIComponent = { id: node.id, component };
@@ -104,10 +125,34 @@ export function exportSurface(surface: Surface, catalogId: string): A2UIExport {
       collectPaths(val, boundPaths);
     }
 
-    if (node.children) out.children = node.children.slice();
+    // Collapse object-slot children (header/cap/…) back into object props whose
+    // `children` is an id-ref array; ordinary children stay in `children`.
+    const slotChildren: DocNode[] = [];
+    const bodyChildren: NodeId[] = [];
+    for (const childId of node.children ?? []) {
+      const child = surface.nodes[childId];
+      if (child?.type === SLOT_TYPE && child.editorMeta?.slotOf) slotChildren.push(child);
+      else bodyChildren.push(childId);
+    }
+
+    for (const slot of slotChildren) {
+      // Empty, prop-less slot zones are editor-only scaffolding — don't emit them.
+      const childCount = slot.children?.length ?? 0;
+      if (childCount === 0 && Object.keys(slot.props).length === 0) continue;
+      const propName = slot.editorMeta!.slotOf!;
+      out[propName] = { ...slot.props, children: (slot.children ?? []).slice() };
+      collectPaths(slot.props, boundPaths);
+    }
+
+    if (node.children) out.children = bodyChildren.slice();
 
     components.push(out);
-    if (node.children) for (const childId of node.children) visit(childId);
+
+    // Emit slot subtrees first (matches the import-time prepend order), then body.
+    for (const slot of slotChildren) {
+      for (const childId of slot.children ?? []) visit(childId);
+    }
+    for (const childId of bodyChildren) visit(childId);
   };
 
   visit(surface.root);
@@ -177,6 +222,27 @@ export function importSurface(a2ui: A2UIExport): Surface {
     } else if (children !== undefined) {
       props.children = children as DynamicString;
     }
+
+    // Expand object-slot props (e.g. header = { padding, children: ["id", …] })
+    // into synthetic Slot nodes prepended to this node's children, so their
+    // content is editable on the canvas. Detected by an object prop whose
+    // `children` is an array of id-ref strings.
+    const slotIds: NodeId[] = [];
+    for (const [key, val] of Object.entries(rest)) {
+      if (!isObjectSlotValue(val)) continue;
+      const { children: slotChildren, ...slotScalars } = val as Record<string, unknown>;
+      const slotId = newId();
+      nodes[slotId] = {
+        id: slotId,
+        type: SLOT_TYPE,
+        props: slotScalars,
+        children: (slotChildren as string[]).slice(),
+        editorMeta: { slotOf: key },
+      };
+      slotIds.push(slotId);
+      delete props[key];
+    }
+    if (slotIds.length) childIds = [...slotIds, ...(childIds ?? [])];
 
     if (isLayout) {
       // Normalise legacy "Column"/"Row" names — "Box" already carries direction.

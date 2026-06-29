@@ -22,12 +22,14 @@ declare const process: { exit(code?: number): never };
 import basic from "./fixtures/01-basic.json";
 import composite from "./fixtures/02-composite.json";
 import bound from "./fixtures/03-bound.json";
+import slots from "./fixtures/04-slots.json";
 import broken from "./fixtures/99-broken.json";
 
 const validFixtures: Array<{ name: string; data: A2UIExport }> = [
   { name: "01-basic", data: basic as A2UIExport },
   { name: "02-composite", data: composite as A2UIExport },
   { name: "03-bound", data: bound as A2UIExport },
+  { name: "04-slots", data: slots as A2UIExport },
 ];
 
 /** Canonical JSON (recursively key-sorted) for order-insensitive deep compare. */
